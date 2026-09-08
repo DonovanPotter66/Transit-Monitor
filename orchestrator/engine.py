@@ -15,7 +15,12 @@ def resolve_executable(value, base):
         local=Path(base)/candidate
         if local.is_file(): return local
     found=shutil.which(str(value))
-    return Path(found) if found else candidate
+    if found: return Path(found)
+    # setup-python guarantees the interpreter running this module; use it
+    # when the runner lacks a separate python/python3 PATH alias.
+    if str(value) in {"python", "python3"} and Path(sys.executable).is_file():
+        return Path(sys.executable)
+    return candidate
 
 SCHEMA="""
 CREATE TABLE IF NOT EXISTS runs(run_id TEXT PRIMARY KEY,started_at TEXT,finished_at TEXT,status TEXT,dry_run INTEGER,config_hash TEXT,error TEXT);
