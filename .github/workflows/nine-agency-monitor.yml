@@ -87,6 +87,13 @@ jobs:
         shell: bash
         run: |
           python orchestrator/download_onedrive.py "state/input/Transit Agency Monitor.xlsx"
+          # Keep compatibility with configs that resolve paths from the
+          # orchestrator directory rather than the repository root.
+          mkdir -p orchestrator/state/input
+          cp "state/input/Transit Agency Monitor.xlsx" "orchestrator/state/input/Transit Agency Monitor.xlsx"
+          echo "Verified workbook locations:"
+          ls -l "state/input/Transit Agency Monitor.xlsx" \
+                "orchestrator/state/input/Transit Agency Monitor.xlsx"
 
       - name: Run nine-agency orchestrator in staging mode
         if: steps.local_time.outputs.run == 'true'
