@@ -41,6 +41,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Provide orchestrator Python aliases
+        shell: bash
+        run: |
+          # Some cloud path resolution treats configured python names as
+          # repository-relative files. Create those aliases explicitly.
+          ln -sf "$(command -v python)" orchestrator/python
+          ln -sf "$(command -v python)" orchestrator/python3
+
       - name: Install monitor dependencies
         shell: bash
         run: |
