@@ -27,6 +27,14 @@ jobs:
     steps:
       - name: Check out monitor
         uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Verify checked-out revision
+        shell: bash
+        run: |
+          echo "Checked-out commit: $(git rev-parse HEAD)"
+          grep -o '"path":"python[0-9]*"' orchestrator/config.github-actions.json || true
 
       - name: Install Python
         uses: actions/setup-python@v5
