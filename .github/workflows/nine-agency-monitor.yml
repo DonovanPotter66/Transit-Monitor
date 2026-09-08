@@ -1,0 +1,113 @@
+name: Nine-agency transit monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub Actions schedules use UTC. Run at both UTC offsets and let the
+    # local-time gate below select exactly 06:00 America/Los_Angeles.
+    - cron: "0 13 * * *"
+    - cron: "0 14 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # The job must not publish until these are configured as repository or
+      # environment secrets.  Values are never written to logs or payloads.
+      GRAPH_TENANT_ID: ${{ secrets.GRAPH_TENANT_ID }}
+      GRAPH_CLIENT_ID: ${{ secrets.GRAPH_CLIENT_ID }}
+      GRAPH_CLIENT_SECRET: ${{ secrets.GRAPH_CLIENT_SECRET }}
+      ONEDRIVE_ITEM_ID: ${{ secrets.ONEDRIVE_ITEM_ID }}
+      ONEDRIVE_DRIVE_ID: ${{ secrets.ONEDRIVE_DRIVE_ID }}
+
+    steps:
+      - name: Check out monitor
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install monitor dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r cloud-transit-monitor/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Verify cloud credentials are configured
+        shell: bash
+        run: |
+          missing=0
+          for name in GRAPH_TENANT_ID GRAPH_CLIENT_ID GRAPH_CLIENT_SECRET ONEDRIVE_DRIVE_ID ONEDRIVE_ITEM_ID; do
+            if [ -z "${!name}" ]; then echo "Missing required GitHub secret: $name"; missing=1; fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Failing closed: no acquisition or workbook publication was attempted."
+            exit 1
+          fi
+
+      - name: Gate on local 06:00 time
+        id: local_time
+        shell: bash
+        run: |
+          # Manual dispatch is an explicit test and must run immediately.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$(TZ=America/Los_Angeles date +%H)" != "06" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping duplicate UTC trigger outside local 06:00."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download canonical workbook template
+        if: steps.local_time.outputs.run == 'true'
+        shell: bash
+        run: |
+          python orchestrator/download_onedrive.py "state/input/Transit Agency Monitor.xlsx"
+
+      - name: Run nine-agency orchestrator in staging mode
+        if: steps.local_time.outputs.run == 'true'
+        shell: bash
+        run: |
+          # This intentionally points at a cloud-specific configuration that
+          # must be added with Linux paths and a portable workbook publisher
+          # before the schedule is enabled for production publication.
+          test -f orchestrator/config.github-actions.json || {
+            echo "Missing orchestrator/config.github-actions.json; cloud publication is not enabled." >&2
+            exit 1
+          }
+          python -m orchestrator run --config orchestrator/config.github-actions.json
+
+      - name: Validate committed workbook package before upload
+        if: steps.local_time.outputs.run == 'true' && success()
+        shell: bash
+        run: |
+          workbook=$(find orchestrator/state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
+          test -n "$workbook" || { echo "No committed workbook found" >&2; exit 1; }
+          python orchestrator/validate_xlsx_package.py "$workbook"
+
+      - name: Upload run logs and reports
+        if: always() && steps.local_time.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nine-agency-monitor-${{ github.run_id }}
+          path: |
+            orchestrator/state/**/*.jsonl
+            orchestrator/state/**/*manifest.json
+            orchestrator/state/**/*exception*.json
+          if-no-files-found: ignore
+
+      - name: Publish verified workbook to OneDrive
+        if: steps.local_time.outputs.run == 'true' && success()
+        shell: bash
+        run: |
+          workbook=$(find orchestrator/state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
+          test -n "$workbook" || { echo "No committed workbook found" >&2; exit 1; }
+          python orchestrator/upload_onedrive.py "$workbook"

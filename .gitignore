@@ -1,0 +1,16 @@
+# Local automation workbooks and generated run artifacts
+/Automation Data/*.xlsx
+/Automation Data/~$*.xlsx
+/.codex-daily-brief-*/
+# Generated monitor state, logs, and local credentials
+/orchestrator/state/
+/orchestrator/test_runs/
+/orchestrator/*.sqlite3
+/orchestrator/*.jsonl
+/cloud-transit-monitor/.env
+/cloud-transit-monitor/.venv/
+/output/
+/outputs/
+/tmp/
+__pycache__/
+*.py[cod]
