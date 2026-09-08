@@ -101,7 +101,7 @@ class Orchestrator:
     def verify_executables(self):
         for name,spec in self.config.get("executables",{}).items():
             if not spec.get("enabled",True): continue
-            p=Path(spec["path"]); p=p if p.is_absolute() else self._path(spec["path"])
+            p=resolve_executable(spec["path"], self.base)
             if not p.is_file():
                 if spec.get("required",True): raise RuntimeError(f"required executable missing: {name}: {p}")
                 self.event(event="executable_unavailable",name=name,path=str(p)); continue
@@ -114,7 +114,7 @@ class Orchestrator:
         for name,spec in self.config.get("pipelines",{}).items():
             imports=spec.get("required_imports",[])
             if not imports: continue
-            python=Path(spec.get("python",sys.executable)); python=python if python.is_absolute() else self._path(str(python))
+            python=resolve_executable(spec.get("python",sys.executable), self.base)
             if not python.is_file(): raise RuntimeError(f"executable_missing: {name}: {python}")
             code="import " + ", ".join(imports)
             try: subprocess.run([str(python),"-c",code],check=True,capture_output=True,text=True,timeout=30)
@@ -122,7 +122,7 @@ class Orchestrator:
     def verify_pipeline_tools(self):
         for name,spec in self.config.get("pipelines",{}).items():
             if spec.get("adapter") not in {"workbook", "workbook_python"}: continue
-            node=Path(spec.get("node","")); node=node if node.is_absolute() else self._path(str(node))
+            node=resolve_executable(spec.get("node",""), self.base)
             script=Path(spec.get("script","")); script=script if script.is_absolute() else self._path(str(script))
             canonical=Path(spec.get("canonical_workbook","")); canonical=canonical if canonical.is_absolute() else self._path(str(canonical))
             if spec.get("adapter") == "workbook" and not node.is_file(): raise RuntimeError(f"executable_missing: {name} node: {node}")
