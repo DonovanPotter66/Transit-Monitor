@@ -54,6 +54,10 @@ def choose(record: dict[str, str], aliases: Iterable[str]) -> str:
             return value
     return ""
 
+def looks_like_date_or_timestamp(value: str) -> bool:
+    value = clean(value)
+    return bool(re.search(r"\\b\\d{1,2}/\\d{1,2}/\\d{2,4}\\b|\\b\\d{1,2}:\\d{2}\\s*(?:AM|PM)?\\b", value, re.I))
+
 
 def classify(text: str) -> tuple[str, str]:
     lower = text.lower()
@@ -69,6 +73,8 @@ def normalize(source: Source, records: list[dict[str, str]]) -> list[Opportunity
     seen: set[tuple[str, str]] = set()
     for index, record in enumerate(records, 1):
         opportunity_id = choose(record, ID_HEADERS)
+        if looks_like_date_or_timestamp(opportunity_id):
+            opportunity_id = ""
         title = choose(record, TITLE_HEADERS)
         if not title:
             continue

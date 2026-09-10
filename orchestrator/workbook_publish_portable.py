@@ -70,14 +70,15 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
     failures = [s for s in sources if str(s.get("check_result", "")).lower() != "success"]
     changes_agencies = {x.get("agency") for x in changes}
     # Summary and dashboard banners.
-    set_matrix(wb["Summary"], "A23", [[run_date, run.get("status"), len(agencies), len(changes_agencies), sum(c.get("priority")=="High" for c in changes), sum(c.get("priority")=="Medium" for c in changes), len(failures), "; ".join(o.get("project_name", "") for o in high[:5]), "Normalized payload validated"]])
+    # Row 23 previously contained misplaced internal metadata; keep it clear.
+    set_matrix(wb["Summary"], "A23", [[None] * 9])
     set_matrix(wb["Dashboard"], "A2", [[f"Latest run: {run.get('run_date','')} | Status: {run.get('status','')} | Agencies checked: {len(agencies)} | Agencies with changes: {len(changes_agencies)} | Failed checks: {len(failures)}"]])
     set_matrix(wb["Dashboard"], "A21", [[f"{run.get('run_date','')}: {len(changes)} material changes"]])
     def d(v): return typed_date(v)
     write_rows(*tables["OpportunityRegister"], [[o.get("agency"),o.get("opportunity_id"),o.get("project_name"),o.get("description", ""),d(o.get("posted_date")),d(o.get("due_date")),o.get("status"),o.get("priority"),o.get("pgh_wong_relevance", ""),o.get("change_status", ""),prior.get(str(o.get("opportunity_id")), d(o.get("first_seen_date") or run.get("run_date"))),d(o.get("last_seen_date") or run.get("run_date")),o.get("source_url"),o.get("opportunity_url", o.get("source_url"))] for o in opps])
-    write_rows(*tables["HighPriorityPursuits"], [[run_date,o.get("agency"),o.get("opportunity_id"),o.get("project_name"),o.get("priority"),o.get("why_it_matters", ""),o.get("next_step", "Review solicitation"),o.get("source_url")] for o in high])
+    write_rows(*tables["HighPriorityPursuits"], [[run_date,o.get("agency"),o.get("opportunity_id"),o.get("project_name"),o.get("priority"),o.get("why_it_matters", ""),f"{o.get('next_step') or 'Review solicitation'} [{o.get('opportunity_id')}] — {o.get('project_name')}",o.get("source_url")] for o in high])
     write_rows(*tables["SourceHealth"], [[s.get("agency"),s.get("source_name"),d(s.get("checked_at")),s.get("check_result"),d(s.get("last_successful_check")),s.get("items_found",0),s.get("consecutive_failures",0),s.get("failure_reason", ""),s.get("health_indicator", "Unknown")] for s in sources])
-    write_rows(*tables["AgencyOverview"], [[a,sum(o.get("agency")==a for o in opps),sum(o.get("agency")==a and o.get("priority")=="High" for o in opps),run_date if any(c.get("agency")==a for c in changes) else None,"; ".join(c.get("change_type", "") for c in changes if c.get("agency")==a),next((o.get("project_name") for o in opps if o.get("agency")==a),None),next((o.get("priority") for o in opps if o.get("agency")==a),None),d(next((o.get("due_date") for o in opps if o.get("agency")==a),None)),next((s.get("source_url") for s in sources if s.get("agency")==a),None),"Derived from normalized payload"] for a in agencies])
+    write_rows(*tables["AgencyOverview"], [[a,sum(o.get("agency")==a for o in opps),sum(o.get("agency")==a and o.get("priority")=="High" for o in opps),run_date if any(c.get("agency")==a for c in changes) else None,"; ".join(c.get("change_type", "") for c in changes if c.get("agency")==a),next((o.get("project_name") for o in opps if o.get("agency")==a),None),next((o.get("priority") for o in opps if o.get("agency")==a),"No high-priority opportunities found"),d(next((o.get("due_date") for o in opps if o.get("agency")==a),None)),next((s.get("source_url") for s in sources if s.get("agency")==a),None)] for a in agencies])
     for agency in agencies:
         key = agency.replace(" ", "_"); ws = wb[key] if key in wb.sheetnames else (wb[agency] if agency in wb.sheetnames else None)
         if not ws: continue
@@ -89,7 +90,12 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         if clog:
             ac = [c for c in changes if c.get("agency")==agency]
             write_rows(ws, clog, [[d(c.get("run_date") or run.get("run_date")),agency,c.get("source_name", ""),c.get("opportunity_id"),c.get("project_name", ""),c.get("change_type"),c.get("field_changed", ""),c.get("previous_value", ""),c.get("new_value", ""),c.get("status", ""),c.get("priority", ""),c.get("pgh_wong_relevance", ""),c.get("why_it_matters", ""),c.get("source_url"),c.get("check_result", "success"),c.get("notes", "")] for c in ac])
+    # Make human-facing columns readable without changing the protected sheet.
     for ws in wb.worksheets:
+        for col in range(1, ws.max_column + 1):
+            values = [ws.cell(r, col).value for r in range(1, min(ws.max_row, 80) + 1)]
+            width = max((len(str(v)) for v in values if v is not None), default=10)
+            ws.column_dimensions[get_column_letter(col)].width = min(max(width + 2, 12), 48)
         for row in ws.iter_rows():
             for cell in row:
                 if isinstance(cell.value, str) and any(err in cell.value for err in ("#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A")): raise ValueError(f"formula error detected: {ws.title}!{cell.coordinate}")
