@@ -2,6 +2,12 @@ name: Nine-agency transit monitor
 
 on:
   workflow_dispatch:
+    inputs:
+      diagnostic_only:
+        description: "Run MBTA browser diagnostics only (no workbook processing)"
+        required: false
+        default: false
+        type: boolean
   schedule:
     # GitHub Actions schedules use UTC. Run at both UTC offsets and let the
     # local-time gate below select exactly 06:00 America/Los_Angeles.
@@ -56,6 +62,11 @@ jobs:
           python -m pip install -r cloud-transit-monitor/requirements.txt
           python -m playwright install --with-deps chromium
 
+      - name: Run MBTA diagnostic only
+        if: inputs.diagnostic_only == true
+        shell: bash
+        run: python orchestrator/diagnose_mbta.py --output state/mbta-diagnostic.json
+
       - name: Verify cloud credentials are configured
         shell: bash
         run: |
@@ -83,7 +94,7 @@ jobs:
           fi
 
       - name: Download canonical workbook template
-        if: steps.local_time.outputs.run == 'true'
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true
         shell: bash
         run: |
           python orchestrator/download_onedrive.py "state/input/Transit Agency Monitor.xlsx"
@@ -96,7 +107,7 @@ jobs:
                 "orchestrator/state/input/Transit Agency Monitor.xlsx"
 
       - name: Run nine-agency orchestrator in staging mode
-        if: steps.local_time.outputs.run == 'true'
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true
         shell: bash
         run: |
           # This intentionally points at a cloud-specific configuration that
@@ -109,7 +120,7 @@ jobs:
           python -m orchestrator run --config orchestrator/config.github-actions.json
 
       - name: Validate committed workbook package before upload
-        if: steps.local_time.outputs.run == 'true' && success()
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && success()
         shell: bash
         run: |
           workbook=$(find orchestrator/state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
@@ -140,7 +151,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish verified workbook to OneDrive
-        if: steps.local_time.outputs.run == 'true' && success()
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && success()
         shell: bash
         run: |
           workbook=$(find orchestrator/state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
