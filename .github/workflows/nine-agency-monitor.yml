@@ -118,14 +118,26 @@ jobs:
 
       - name: Upload run logs and reports
         if: always() && steps.local_time.outputs.run == 'true'
+        shell: bash
+        run: |
+          mkdir -p state
+          {
+            echo "Artifact inventory"
+            echo "commit=$(git rev-parse HEAD)"
+            find state orchestrator/state -type f -maxdepth 6 2>/dev/null | sort || true
+          } > state/artifact-inventory.txt
+
+      - name: Upload run logs and reports artifact
+        if: always() && steps.local_time.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: nine-agency-monitor-${{ github.run_id }}
           path: |
+            state/**
             orchestrator/state/**/*.jsonl
             orchestrator/state/**/*manifest.json
             orchestrator/state/**/*exception*.json
-          if-no-files-found: ignore
+          if-no-files-found: error
 
       - name: Publish verified workbook to OneDrive
         if: steps.local_time.outputs.run == 'true' && success()
