@@ -51,7 +51,9 @@ class PythonJsonSource:
             data=target.read_bytes()
             if not data: raise RuntimeError("source_empty: acquisition output")
             if self.spec.get("reject_partial") and json.loads(data).get("run",{}).get("status") != "Complete":
-                raise RuntimeError("source_partial: one or more configured agency routes were quarantined")
+                payload=json.loads(data)
+                details="; ".join(f"{s.get('agency')}: {s.get('check_result')} ({s.get('failure_reason') or 'no details'})" for s in payload.get("sources",[]) if str(s.get("check_result","")).lower() != "success")
+                raise RuntimeError(f"source_partial: one or more configured agency routes were quarantined [{details or 'details unavailable'}]")
             data=self._with_deterministic_changes(data)
             target.write_bytes(data)
             content_hash=sha256(data); final=acquisition/f"{content_hash}.json"
