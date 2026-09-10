@@ -123,7 +123,7 @@ jobs:
         if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && success()
         shell: bash
         run: |
-          workbook=$(find orchestrator/state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
+          workbook=$(find state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
           test -n "$workbook" || { echo "No committed workbook found" >&2; exit 1; }
           python orchestrator/validate_xlsx_package.py "$workbook"
 
@@ -154,6 +154,6 @@ jobs:
         if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && success()
         shell: bash
         run: |
-          workbook=$(find orchestrator/state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
+          workbook=$(find state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
           test -n "$workbook" || { echo "No committed workbook found" >&2; exit 1; }
           python orchestrator/upload_onedrive.py "$workbook"
