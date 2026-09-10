@@ -85,6 +85,7 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
     agencies = sorted({x.get("agency") for x in sources + opps if x.get("agency")})
     high = [o for o in opps if o.get("priority") == "High"]
     failures = [s for s in sources if str(s.get("check_result", "")).lower() != "success"]
+    failed_agencies = {s.get("agency") for s in failures}
     changes_agencies = {x.get("agency") for x in changes}
     # Keep the Summary table as a current-run record. The old implementation
     # left projected/template rows in place, which made the sheet look stale.
@@ -121,7 +122,7 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         key = agency.replace(" ", "_"); ws = wb[key] if key in wb.sheetnames else (wb[agency] if agency in wb.sheetnames else None)
         if not ws: continue
         current = next((t for t in ws.tables.values() if t.name in (f"Current_{key}", f"Current_{agency}")), None)
-        if current:
+        if current and agency not in failed_agencies:
             # Make the agency page readable: highest-priority solicitations
             # first, with stable tie-breakers so repeated runs do not shuffle.
             ao = sorted(
@@ -192,7 +193,7 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         for table in list(ws.tables.values()):
             if table.name.startswith("Current_"):
                 suffix = table.name[len("Current_"):]
-                if suffix.replace("_", " ") not in {a.replace(" ", "_") for a in agencies} and suffix not in agencies:
+                if suffix.replace("_", " ") not in {a.replace(" ", "_") for a in agencies if a not in failed_agencies} and suffix not in {a for a in agencies if a not in failed_agencies}:
                     write_rows(ws, table, [])
     # Make human-facing columns readable.
     for ws in wb.worksheets:
