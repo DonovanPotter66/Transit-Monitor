@@ -156,6 +156,30 @@ async def _link_records(page: Page) -> list[dict[str, str]]:
           .map(a => ({Title: a.innerText.replace(/\\s+/g, ' ').trim(), _url: a.href}))"""
     )
 
+async def _mbta_frame_records(page: Page) -> list[dict[str, str]]:
+    """MBTA currently renders the future-project table in a child frame."""
+    records: list[dict[str, str]] = []
+    for frame in page.frames:
+        try:
+            found = await frame.locator("table").evaluate_all(
+                """tables => tables.flatMap(table => {
+                  const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
+                  const rows = [...table.querySelectorAll('tr')];
+                  if (!rows.length) return [];
+                  const headers = [...rows[0].querySelectorAll('th,td')].map(x => clean(x.innerText));
+                  return rows.slice(1).map(row => {
+                    const cells = [...row.querySelectorAll('th,td')];
+                    const item = {}; cells.forEach((cell,i) => item[headers[i] || `Column ${i+1}`] = clean(cell.innerText));
+                    const link = row.querySelector('a[href]'); if (link) item._url = link.href;
+                    return item;
+                  }).filter(item => Object.values(item).some(Boolean));
+                })"""
+            )
+            records.extend(found)
+        except Exception:
+            continue
+    return records
+
 async def _marta_text_records(page: Page) -> list[dict[str, str]]:
     """MARTA renders anticipated procurements as accessible text, not a table."""
     text = await page.locator("body").inner_text()
@@ -184,6 +208,8 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
             records = await _marta_text_records(page)
         else:
             records = await (_link_records(page) if source.mode == "links" else _table_records(page))
+            if source.agency == "MBTA" and not records:
+                records = await _mbta_frame_records(page)
         opportunities = normalize(source, records)
         if not opportunities:
             raise RuntimeError("Expected populated opportunity rows were not found.")
