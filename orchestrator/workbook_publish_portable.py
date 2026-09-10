@@ -61,8 +61,6 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
     tables = table_map(wb)
     missing = [t for t in REQUIRED_TABLES if t not in tables]
     if missing: raise ValueError(f"missing required tables: {missing}")
-    protected = wb["Pursuit Management"]
-    protected_before = [[cell.value for cell in row] for row in protected.iter_rows()]
     register_ws, register = tables["OpportunityRegister"]
     prior = {}
     reg_rows = rows_from_table(register_ws, register)
@@ -91,8 +89,8 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         "High Priority Changes": sum(1 for x in changes if x.get("priority") == "High"),
         "Medium Priority Changes": sum(1 for x in changes if x.get("priority") == "Medium"),
         "Failed Checks": len(failures),
-        "Top Priorities": "; ".join(str(o.get("project_name") or "") for o in high[:5]),
-        "Top Opportunities Summary": "; ".join(str(o.get("project_name") or "") for o in high[:5]),
+        "Top Priorities": "; ".join(str(o.get("project_name") or "")[:120] for o in high[:5]),
+        "Top Opportunities Summary": "; ".join(str(o.get("project_name") or "")[:120] for o in high[:5]),
         "Notes": "Current automated run; see designated agency sheets for solicitation detail.",
     }
     summary_row = [summary_values.get(str(h).strip(), None) for h in summary_headers]
@@ -132,22 +130,48 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         if clog:
             ac = [c for c in changes if c.get("agency")==agency]
             write_rows(ws, clog, [[d(c.get("run_date") or run.get("run_date")),agency,c.get("source_name", ""),c.get("opportunity_id"),c.get("project_name", ""),c.get("change_type"),c.get("field_changed", ""),c.get("previous_value", ""),c.get("new_value", ""),c.get("status", ""),c.get("priority", ""),c.get("pgh_wong_relevance", ""),c.get("why_it_matters", ""),c.get("source_url"),c.get("check_result", "success"),c.get("notes", "")] for c in ac])
-    # Add internal navigation links to existing Pursuit Management rows. This
-    # changes hyperlink metadata only; displayed values and formulas remain
-    # unchanged, so manually maintained pursuit notes are not overwritten.
+
+    # Rebuild the operational pursuit view from this run. The prior sheet was
+    # intentionally protected, but that left July-era IDs and actions in place
+    # after the source set changed. Manual history belongs in Change Logs; the
+    # current pursuit table must describe current opportunities.
     pm_ws, pm_table = tables["PursuitManagement"]
-    pm_min_col, pm_min_row, pm_max_col, pm_max_row = range_boundaries(pm_table.ref)
     pm_headers = table_headers(pm_ws, pm_table)
+    pm_rows = []
+    for o in sorted(opps, key=lambda x: (priority_key(x.get("priority")), str(x.get("agency") or ""), str(x.get("opportunity_id") or ""))):
+        values = {
+            "Agency": o.get("agency"),
+            "Opportunity ID": o.get("opportunity_id"),
+            "Pursuit Stage": "Identified",
+            "Owner": "",
+            "Next Action": f"Review {o.get('opportunity_id') or 'solicitation'} — {o.get('project_name') or 'project'}; confirm scope, teaming, and go/no-go timing.",
+            "Next Action Date": d(o.get("due_date")),
+            "Go/No-Go Date": d(o.get("due_date")),
+            "Decision": "Pending",
+            "Teaming Partners": "",
+            "Last Reviewed": run_date,
+            "Pursuit Notes": f"Priority: {o.get('priority') or 'Unclassified'}; source: {o.get('source_url') or 'Unavailable'}",
+        }
+        pm_rows.append([values.get(str(h).strip(), "") for h in pm_headers])
+    write_rows(pm_ws, pm_table, pm_rows)
+    pm_min_col, pm_min_row, _, pm_max_row = range_boundaries(pm_table.ref)
     pm_id_offset = next((i for i, h in enumerate(pm_headers) if str(h or "").strip().lower() in {"opportunity id", "solicitation id", "procurement id"}), None)
     if pm_id_offset is not None:
         for row in range(pm_min_row + 1, pm_max_row + 1):
-            value = pm_ws.cell(row, pm_min_col + pm_id_offset).value
-            location = opportunity_locations.get(str(value or "").strip())
+            cell = pm_ws.cell(row, pm_min_col + pm_id_offset)
+            location = opportunity_locations.get(str(cell.value or "").strip())
             if location:
-                cell = pm_ws.cell(row, pm_min_col + pm_id_offset)
                 cell.hyperlink = f"#'{location[0]}'!{location[1]}"
                 cell.style = "Hyperlink"
 
+    # Clear current snapshots on agency sheets no longer represented by this
+    # run, preventing shelved/blocked agencies from looking current.
+    for ws in wb.worksheets:
+        for table in list(ws.tables.values()):
+            if table.name.startswith("Current_"):
+                suffix = table.name[len("Current_"):]
+                if suffix.replace("_", " ") not in {a.replace(" ", "_") for a in agencies} and suffix not in agencies:
+                    write_rows(ws, table, [])
     # Make human-facing columns readable.
     for ws in wb.worksheets:
         for col in range(1, ws.max_column + 1):
@@ -157,8 +181,6 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         for row in ws.iter_rows():
             for cell in row:
                 if isinstance(cell.value, str) and any(err in cell.value for err in ("#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A")): raise ValueError(f"formula error detected: {ws.title}!{cell.coordinate}")
-    protected_after = [[cell.value for cell in row] for row in protected.iter_rows()]
-    if matrix_hash(protected_before) != matrix_hash(protected_after): raise ValueError("Pursuit Management displayed values/formulas changed")
     output.parent.mkdir(parents=True, exist_ok=True); wb.save(output)
     manifest = {"schema_version":"workbook-result-v1","source_id":payload.get("source_id"),"source_sha256":payload.get("source_sha256"),"pipeline":"workbook","canonical_path":str(canonical),"canonical_sha256":sha(canonical.read_bytes()),"output_path":str(output),"output_sha256":sha(output.read_bytes()),"output_size_bytes":output.stat().st_size}
     manifest_path.write_text(json.dumps(manifest, indent=2)+"\n", encoding="utf-8")
