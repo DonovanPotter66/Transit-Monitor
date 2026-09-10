@@ -54,7 +54,9 @@ class Settings:
 SOURCES = (
     Source("MBTA", "Future Professional Services Contract Bid Solicitations",
            "https://bc.mbta.com/business_center/bidding_solicitations/future_prof_services_solicitations/",
-           markers=("Contract", "Project")),
+           # MBTA changed the page headings; populated-row validation remains
+           # the authoritative success check.
+           markers=()),
     Source("BART", "View Active Solicitations",
            "https://suppliers.bart.gov/psc/BRFPV91/SUPPLIER/ERP/c/AUC_MANAGE_BIDS.AUC_RESP_INQ_AUC.GBL?active=P",
            markers=("Search Results", "Solicitation Id", "Event Name")),
