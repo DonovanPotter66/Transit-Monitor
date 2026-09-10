@@ -15,6 +15,10 @@ from src.extract import run_checks  # type: ignore
 
 def iso(value): return value.isoformat() if isinstance(value, date) else value
 
+def looks_like_date_id(value: str) -> bool:
+    """Reject a date/time scraped from a row as an opportunity identifier."""
+    return bool(re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}(?:\s+.*)?", value.strip()))
+
 async def collect(names, source_names):
     selected = [s for s in SOURCES if (not names or s.agency in names) and (not source_names or s.name in source_names)]
     if not selected: raise RuntimeError(f"no configured sources for {sorted(names)}")
@@ -27,8 +31,8 @@ async def collect(names, source_names):
             oid = str(item.opportunity_id or "").strip()
             # Generic parser placeholders are not globally unique. Scope only
             # those placeholders by agency; preserve every real source ID.
-            if re.fullmatch(r"SRC[-_]?\d+", oid, flags=re.I) or oid.lower() in {"procurement","description","project","title","status","tbd"}:
-                if not re.fullmatch(r"SRC[-_]?\d+", oid, flags=re.I):
+            if looks_like_date_id(oid) or re.fullmatch(r"SRC[-_]?\d+", oid, flags=re.I) or oid.lower() in {"procurement","description","project","title","status","tbd"}:
+                if looks_like_date_id(oid) or not re.fullmatch(r"SRC[-_]?\d+", oid, flags=re.I):
                     seed = f"{item.agency}|{item.source_name}|{item.project_name}".encode("utf-8", "replace")
                     oid = f"{item.agency}|AUTO-{hashlib.sha256(seed).hexdigest()[:12]}"
                 else:
