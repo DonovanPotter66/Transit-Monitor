@@ -5,7 +5,7 @@ Microsoft Graph client-credentials flow and verifies the uploaded bytes by
 downloading the item again before writing an audit record.
 """
 from __future__ import annotations
-import hashlib, json, os, sys
+import hashlib, json, os, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError
@@ -47,7 +47,17 @@ def main() -> int:
     token = json.loads(request("POST", f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token", data=token_body, headers={"Content-Type": "application/x-www-form-urlencoded"}))["access_token"]
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
     expected = sha(workbook)
-    request("PUT", f"https://graph.microsoft.com/v1.0/drives/{drive}/items/{item}/content", data=workbook.read_bytes(), headers=headers)
+    upload_url = f"https://graph.microsoft.com/v1.0/drives/{drive}/items/{item}/content"
+    for attempt in range(5):
+        try:
+            request("PUT", upload_url, data=workbook.read_bytes(), headers=headers)
+            break
+        except RuntimeError as exc:
+            if "Graph request failed (423)" not in str(exc) or attempt == 4:
+                raise
+            delay = 15 * (attempt + 1)
+            print(f"OneDrive item is locked; retrying upload in {delay}s (attempt {attempt + 2}/5)", file=sys.stderr)
+            time.sleep(delay)
     downloaded = request("GET", f"https://graph.microsoft.com/v1.0/drives/{drive}/items/{item}/content", headers={"Authorization": f"Bearer {token}"})
     actual = hashlib.sha256(downloaded).hexdigest()
     if actual != expected:
