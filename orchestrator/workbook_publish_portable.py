@@ -10,6 +10,7 @@ from copy import copy
 from datetime import datetime, date
 from pathlib import Path
 from openpyxl import load_workbook
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils.cell import range_boundaries, get_column_letter
 
 REQUIRED_SHEETS = ["Dashboard", "Summary", "High Priority Pursuit List", "Opportunity Register", "Source Health", "Pursuit Management"]
@@ -59,6 +60,16 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
     missing = [s for s in REQUIRED_SHEETS if s not in wb.sheetnames]
     if missing: raise ValueError(f"missing required sheets: {missing}")
     tables = table_map(wb)
+    # Excel may remove a table during its repair/recovery prompt while leaving
+    # the visible sheet data intact. Recreate the operational PM table so one
+    # repaired download cannot permanently block the next run.
+    if "PursuitManagement" not in tables:
+        ws = wb["Pursuit Management"]
+        end_row = max(2, ws.max_row)
+        pm = Table(displayName="PursuitManagement", ref=f"A1:G{end_row}")
+        pm.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+        ws.add_table(pm)
+        tables = table_map(wb)
     missing = [t for t in REQUIRED_TABLES if t not in tables]
     if missing: raise ValueError(f"missing required tables: {missing}")
     register_ws, register = tables["OpportunityRegister"]
