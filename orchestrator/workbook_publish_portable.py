@@ -136,21 +136,26 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
     # after the source set changed. Manual history belongs in Change Logs; the
     # current pursuit table must describe current opportunities.
     pm_ws, pm_table = tables["PursuitManagement"]
-    pm_headers = table_headers(pm_ws, pm_table)
+    # Remove obsolete hand-maintained fields from the current view. They are
+    # not supplied by live agency sources and therefore cannot be kept current.
+    pm_headers = ["Agency", "Opportunity ID", "Priority", "Project Name", "Next Action", "Due Date", "Source URL"]
+    pm_min_col, pm_min_row, pm_old_max_col, pm_old_max_row = range_boundaries(pm_table.ref)
+    for col, header in enumerate(pm_headers, pm_min_col):
+        pm_ws.cell(pm_min_row, col).value = header
+    for row in range(pm_min_row + 1, max(pm_old_max_row, pm_min_row + len(opps) + 1) + 1):
+        for col in range(pm_min_col + len(pm_headers), pm_old_max_col + 1):
+            pm_ws.cell(row, col).value = None
+    pm_table.ref = f"{get_column_letter(pm_min_col)}{pm_min_row}:{get_column_letter(pm_min_col + len(pm_headers) - 1)}{max(pm_min_row + 1, pm_min_row + len(opps) + 1)}"
     pm_rows = []
     for o in sorted(opps, key=lambda x: (priority_key(x.get("priority")), str(x.get("agency") or ""), str(x.get("opportunity_id") or ""))):
         values = {
             "Agency": o.get("agency"),
             "Opportunity ID": o.get("opportunity_id"),
-            "Pursuit Stage": "Identified",
-            "Owner": "",
+            "Priority": o.get("priority") or "Unclassified",
+            "Project Name": o.get("project_name") or "",
             "Next Action": f"Review {o.get('opportunity_id') or 'solicitation'} — {o.get('project_name') or 'project'}; confirm scope, teaming, and go/no-go timing.",
-            "Next Action Date": d(o.get("due_date")),
-            "Go/No-Go Date": d(o.get("due_date")),
-            "Decision": "Pending",
-            "Teaming Partners": "",
-            "Last Reviewed": run_date,
-            "Pursuit Notes": f"Priority: {o.get('priority') or 'Unclassified'}; source: {o.get('source_url') or 'Unavailable'}",
+            "Due Date": d(o.get("due_date")),
+            "Source URL": o.get("source_url") or "",
         }
         pm_rows.append([values.get(str(h).strip(), "") for h in pm_headers])
     write_rows(pm_ws, pm_table, pm_rows)
