@@ -180,6 +180,21 @@ async def _mbta_frame_records(page: Page) -> list[dict[str, str]]:
             continue
     return records
 
+async def _mbta_text_records(page: Page) -> list[dict[str, str]]:
+    """Fallback for MBTA's accessibility-rendered pipe-delimited rows."""
+    text = await page.locator("body").inner_text()
+    rows = []
+    for line in (clean(x) for x in text.splitlines()):
+        parts = [clean(x) for x in line.split("|")]
+        if len(parts) < 2 or not re.search(r"[A-Z0-9]{4,}[-A-Z0-9]*", parts[0]):
+            continue
+        if parts[0].lower() in {"contract number", "project name"}:
+            continue
+        rows.append({"Contract Number": parts[0], "Project Name": parts[1],
+                     "Project Description": parts[2] if len(parts) > 2 else "",
+                     "Anticipated Advertisement Date": parts[3] if len(parts) > 3 else ""})
+    return rows
+
 async def _marta_text_records(page: Page) -> list[dict[str, str]]:
     """MARTA renders anticipated procurements as accessible text, not a table."""
     text = await page.locator("body").inner_text()
@@ -210,6 +225,8 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
             records = await (_link_records(page) if source.mode == "links" else _table_records(page))
             if source.agency == "MBTA" and not records:
                 records = await _mbta_frame_records(page)
+            if source.agency == "MBTA" and not records:
+                records = await _mbta_text_records(page)
         opportunities = normalize(source, records)
         if not opportunities:
             raise RuntimeError("Expected populated opportunity rows were not found.")
