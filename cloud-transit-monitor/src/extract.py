@@ -82,19 +82,21 @@ def normalize(source: Source, records: list[dict[str, str]]) -> list[Opportunity
             # PeopleSoft renders its search form and result grid in the same
             # HTML surface. Reject controls/template text before it can become
             # a fake solicitation row.
-            ui_terms = ("search criteria", "use saved search", "program codes", "results should include", "manage saved searches")
-            if any(term in title.lower() for term in ui_terms) or str(record.get("_url", "")).lower().startswith("javascript:"):
-                continue
-            bart_id = opportunity_id if re.match(r"^BARTD[-\s]", opportunity_id, re.I) else ""
             title_id = re.search(r"\bBARTD[-\s]?[A-Z0-9]+(?:[-][A-Z0-9]+)*\b", title, re.I)
-            if not bart_id and not title_id:
+            bart_id = opportunity_id if re.match(r"^BARTD[-\s]", opportunity_id, re.I) else ""
+            if title_id:
+                # In concatenated PeopleSoft rows, the first BARTD token is
+                # the solicitation identifier; later tokens belong to other
+                # rows or filter controls.
+                opportunity_id = clean(title_id.group(0))
+                bart_id = opportunity_id
+            ui_terms = ("search criteria", "use saved search", "program codes", "results should include", "manage saved searches")
+            if not bart_id or (not title_id and any(term in title.lower() for term in ui_terms)) or str(record.get("_url", "")).lower().startswith("javascript:"):
                 continue
             if len(title) > 180:
                 # Malformed cells sometimes concatenate the title with posted
                 # and due dates and neighboring filter values.
                 title = clean(re.split(r"\b\d{1,2}/\d{1,2}/\d{4}\b", title, maxsplit=1)[0])[:180]
-            if not opportunity_id and title_id:
-                opportunity_id = clean(title_id.group(0))
         if not opportunity_id:
             match = re.search(r"\b(?:RFP|RFQ|IFB|RFI|ITB|P|Q|AE|OP|RQ)[-\s]?[A-Z0-9()]{4,}\b", title, re.I)
             opportunity_id = clean(match.group(0)) if match else f"SRC-{index:04d}"
