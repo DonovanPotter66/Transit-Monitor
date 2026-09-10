@@ -203,7 +203,7 @@ class Orchestrator:
         if adapter=="mock": MockPipeline(spec).run(item,data,destination,attempt); return
         if adapter=="drawing_analyzer": self.execute_drawing_analyzer(spec,item,destination); return
         if adapter=="graphrag": self.execute_graphrag(spec,item,data,destination); return
-        if adapter=="workbook": self.execute_workbook(spec,item,data,destination); return
+        if adapter in {"workbook", "workbook_python"}: self.execute_workbook(spec,item,data,destination); return
         if adapter!="liteparse": raise RuntimeError(f"unsupported pipeline adapter: {adapter}")
         python=Path(spec["python"]); python=python if python.is_absolute() else self._path(spec["python"])
         runner=Path(spec.get("runner","liteparse_runner.py")); runner=runner if runner.is_absolute() else self.base/runner
