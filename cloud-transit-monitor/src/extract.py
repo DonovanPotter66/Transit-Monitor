@@ -16,8 +16,13 @@ ID_HEADERS = ("opportunity id", "project id", "solicitation id", "solicitation n
               "ref. #", "reference #", "contract number", "contract no", "event id")
 TITLE_HEADERS = ("project title", "project name", "solicitation name", "event name", "title", "project", "description")
 POSTED_HEADERS = ("posted date", "issue date", "release date", "start date", "advertisement date")
-DUE_HEADERS = ("due date", "close date", "end date", "finish date", "response deadline")
+DUE_HEADERS = ("due date", "close date", "end date", "finish date", "response deadline", "anticipated date", "current opening/due date")
 STATUS_HEADERS = ("status", "event status")
+
+# These sources are being reintegrated under an evidence-first contract.  A
+# candidate must carry a real source identifier, a title, a recognizable
+# status, and at least one real date before it can become an Opportunity.
+REINTEGRATION_AGENCIES = {"MBTA", "WMATA", "MTA", "LA Metro"}
 
 HIGH_TERMS = (
     "traction power", "substation", "train control", "signal", "interlocking", "cbrtc", "cbtc",
@@ -56,7 +61,7 @@ def choose(record: dict[str, str], aliases: Iterable[str]) -> str:
 
 def looks_like_date_or_timestamp(value: str) -> bool:
     value = clean(value)
-    return bool(re.search(r"\\b\\d{1,2}/\\d{1,2}/\\d{2,4}\\b|\\b\\d{1,2}:\\d{2}\\s*(?:AM|PM)?\\b", value, re.I))
+    return bool(re.search(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{1,2}:\d{2}\s*(?:AM|PM)?\b", value, re.I))
 
 
 def classify(text: str) -> tuple[str, str]:
@@ -104,6 +109,14 @@ def normalize(source: Source, records: list[dict[str, str]]) -> list[Opportunity
         posted = parse_date(choose(record, POSTED_HEADERS))
         due = parse_date(choose(record, DUE_HEADERS))
         status = choose(record, STATUS_HEADERS) or ("Future opportunity" if "anticipated" in source.name.lower() else "Active")
+        if source.agency in REINTEGRATION_AGENCIES:
+            # Never synthesize an ID or silently accept a UI/header row for a
+            # deferred source.  Publication requires an ID, title, status,
+            # and at least one source-provided date.
+            raw_id = clean(opportunity_id)
+            if (not raw_id or raw_id.startswith("SRC-") or
+                    not title or not status or not (posted or due)):
+                continue
         priority, relevance = classify(" ".join((title, description)))
         opportunity = Opportunity(
             agency=source.agency,
@@ -221,17 +234,71 @@ async def _mbta_text_records(page: Page) -> list[dict[str, str]]:
     return rows
 
 async def _marta_text_records(page: Page) -> list[dict[str, str]]:
-    """MARTA renders anticipated procurements as accessible text, not a table."""
+    """Parse MARTA's accessible anticipated-procurement column stream.
+
+    The page exposes the columns as text rather than a conventional table:
+    contract/title, anticipated date, type, and department.  Navigation and
+    explanatory copy are deliberately ignored.
+    """
     text = await page.locator("body").inner_text()
-    rows=[]; section=False
-    skip={"TBD","RFP","IFB","A&E","Department","Infrastructure","Operations and Urban Planning"}
-    for line in (clean(x) for x in text.splitlines()):
-        if line == "Contract Description": section=True; continue
-        if not section: continue
-        if line.startswith("IMPORTANT") or line in {"Bid Overview","Current Opportunities","Bid Results"}: break
-        if len(line)>12 and line not in skip and not line.startswith("Estimated Value"):
-            rows.append({"Title":line})
+    lines=[clean(x) for x in text.splitlines() if clean(x)]
+    rows=[]; section=False; i=0
+    for line in lines:
+        if line.lower() == "contract description": section=True
+        if section: break
+    if section:
+        i=lines.index(line)+1
+    while i < len(lines):
+        current=lines[i]
+        if current.startswith("IMPORTANT") or current in {"Bid Overview","Current Opportunities","Bid Results"}: break
+        # Contract IDs are embedded in the title (P50723, P50683, ...).
+        if re.search(r"\bP\d{4,}\b", current, re.I):
+            anticipated=lines[i+1] if i+1 < len(lines) else ""
+            kind=lines[i+2] if i+2 < len(lines) else ""
+            department=lines[i+3] if i+3 < len(lines) else ""
+            if kind.upper() in {"RFP","IFB","RFQ","RFI","A&E"} and department:
+                ident=re.search(r"\bP\d{4,}\b", current, re.I).group(0).upper()
+                rows.append({"Contract Number":ident,"Project Name":current,
+                             "Anticipated Date":anticipated,"Status":"Anticipated",
+                             "Type":kind,"Department":department})
+                i += 4
+                continue
+        i += 1
     return rows
+
+
+async def _mta_text_records(page: Page) -> list[dict[str, str]]:
+    """Fallback parser for MTA C&D's label/value accessibility rendering."""
+    text = await page.locator("body").inner_text()
+    rows=[]
+    # MTA publishes repeated blocks headed by solicitation/contract number.
+    pattern = re.compile(
+        r"(?:Solicitation|Contract)\s+(?:number|no\.?)[\s:]+([A-Z0-9-]+).*?"
+        r"(?:Title|Description)[\s:]+(.{3,240}?)(?=\s+(?:Current opening|Due|Document availability|Solicitation|Contract)\b|$)"
+        r"(?:.*?(?:Current opening|Due)\s*(?:date)?[\s:]+([^\n]+))?",
+        re.I | re.S,
+    )
+    for match in pattern.finditer(text):
+        ident, title, due = (clean(x) for x in match.groups())
+        if ident and title:
+            rows.append({"Solicitation Number":ident,"Title":title,
+                         "Current Opening/Due Date":due,"Status":"Active"})
+    return rows
+
+
+def _wmata_candidate_records(records: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Keep only WMATA supplier-portal solicitation rows, never portal UI."""
+    out=[]
+    for record in records:
+        values=" ".join(clean(str(v)) for k,v in record.items() if not str(k).startswith("_"))
+        ident=re.search(r"\bWMATA-\d{6,}\b", values, re.I)
+        title=choose(record, ("solicitation name","title","description","project name"))
+        if ident and title and len(title) > 3:
+            item=dict(record)
+            item["Solicitation ID"]=ident.group(0).upper()
+            item["Solicitation Name"]=title
+            out.append(item)
+    return out
 
 
 async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
@@ -248,6 +315,10 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
             records = await _marta_text_records(page)
         else:
             records = await (_link_records(page) if source.mode == "links" else _table_records(page))
+            if source.agency == "MTA" and not records:
+                records = await _mta_text_records(page)
+            if source.agency == "WMATA":
+                records = _wmata_candidate_records(records)
             if source.agency == "MBTA" and not records:
                 records = await _mbta_frame_records(page)
             if source.agency == "MBTA" and not records:

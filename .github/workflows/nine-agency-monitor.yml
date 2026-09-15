@@ -8,6 +8,11 @@ on:
         required: false
         default: false
         type: boolean
+      diagnostic_excluded:
+        description: "Run read-only diagnostics for MBTA, WMATA, MTA, and LA Metro"
+        required: false
+        default: false
+        type: boolean
   schedule:
     # GitHub Actions schedules use UTC. Run at both UTC offsets and let the
     # local-time gate below select exactly 06:00 America/Los_Angeles.
@@ -67,7 +72,13 @@ jobs:
         shell: bash
         run: python orchestrator/diagnose_mbta.py --output state/mbta-diagnostic.json
 
+      - name: Run excluded-agency diagnostics only
+        if: inputs.diagnostic_excluded == true
+        shell: bash
+        run: python orchestrator/diagnose_excluded_agencies.py --output state/excluded-agencies-diagnostic.json
+
       - name: Verify cloud credentials are configured
+        if: inputs.diagnostic_only != true && inputs.diagnostic_excluded != true
         shell: bash
         run: |
           missing=0
@@ -81,6 +92,7 @@ jobs:
 
       - name: Gate on local 06:00 time
         id: local_time
+        if: inputs.diagnostic_only != true && inputs.diagnostic_excluded != true
         shell: bash
         run: |
           # Manual dispatch is an explicit test and must run immediately.
@@ -94,7 +106,7 @@ jobs:
           fi
 
       - name: Download canonical workbook template
-        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && inputs.diagnostic_excluded != true
         shell: bash
         run: |
           python orchestrator/download_onedrive.py "state/input/Transit Agency Monitor.xlsx"
@@ -107,7 +119,7 @@ jobs:
                 "orchestrator/state/input/Transit Agency Monitor.xlsx"
 
       - name: Run eight-agency orchestrator in staging mode
-        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && inputs.diagnostic_excluded != true
         shell: bash
         run: |
           # This intentionally points at a cloud-specific configuration that
@@ -120,7 +132,7 @@ jobs:
           python -m orchestrator run --config orchestrator/config.github-actions.json
 
       - name: Validate committed workbook package before upload
-        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && success()
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && inputs.diagnostic_excluded != true && success()
         shell: bash
         run: |
           workbook=$(find state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
@@ -128,7 +140,7 @@ jobs:
           python orchestrator/validate_xlsx_package.py "$workbook"
 
       - name: Upload run logs and reports
-        if: always() && steps.local_time.outputs.run == 'true'
+        if: always() && steps.local_time.outputs.run == 'true' && inputs.diagnostic_excluded != true && inputs.diagnostic_only != true
         shell: bash
         run: |
           mkdir -p state
@@ -139,7 +151,7 @@ jobs:
           } > state/artifact-inventory.txt
 
       - name: Upload run logs and reports artifact
-        if: always() && steps.local_time.outputs.run == 'true'
+        if: always() && steps.local_time.outputs.run == 'true' && inputs.diagnostic_excluded != true && inputs.diagnostic_only != true
         uses: actions/upload-artifact@v4
         with:
           name: eight-agency-monitor-${{ github.run_id }}
@@ -151,7 +163,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish verified workbook to OneDrive
-        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && success()
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && inputs.diagnostic_excluded != true && success()
         shell: bash
         run: |
           workbook=$(find state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
