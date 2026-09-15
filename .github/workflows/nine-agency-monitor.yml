@@ -77,6 +77,14 @@ jobs:
         shell: bash
         run: python orchestrator/diagnose_excluded_agencies.py --output state/excluded-agencies-diagnostic.json
 
+      - name: Upload excluded-agency diagnostic report
+        if: always() && inputs.diagnostic_excluded == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: excluded-agencies-diagnostic-${{ github.run_id }}
+          path: state/excluded-agencies-diagnostic.json
+          if-no-files-found: error
+
       - name: Verify cloud credentials are configured
         if: inputs.diagnostic_only != true && inputs.diagnostic_excluded != true
         shell: bash
