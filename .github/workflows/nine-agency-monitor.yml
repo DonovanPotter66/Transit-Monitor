@@ -13,11 +13,6 @@ on:
         required: false
         default: false
         type: boolean
-  schedule:
-    # GitHub Actions schedules use UTC. Run at both UTC offsets and let the
-    # local-time gate below select exactly 06:00 America/Los_Angeles.
-    - cron: "0 13 * * *"
-    - cron: "0 14 * * *"
 
 permissions:
   contents: read
