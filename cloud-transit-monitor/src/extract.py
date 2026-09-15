@@ -267,6 +267,29 @@ async def _marta_text_records(page: Page) -> list[dict[str, str]]:
     return rows
 
 
+async def _marta_current_records(page: Page) -> list[dict[str, str]]:
+    """Parse active MARTA opportunity blocks from the current-opportunities page."""
+    text = await page.locator("body").inner_text()
+    lines=[clean(x) for x in text.splitlines() if clean(x)]
+    rows=[]
+    for i, line in enumerate(lines):
+        ident=re.search(r"\b(?:RFP|RFQ|IFB|RFI|AE)\s*-?\s*[A-Z]?\d{4,}\b", line, re.I)
+        if not ident: continue
+        token=clean(ident.group(0).replace(" ", " "))
+        deadline=""
+        description=""
+        for follow in lines[i+1:i+25]:
+            if follow.lower().startswith("description:"):
+                description=clean(follow.split(":",1)[1])
+            if "proposal/quote submittal to:" in follow.lower():
+                deadline=clean(follow.split(":",1)[1]); break
+        if deadline:
+            rows.append({"Solicitation Number":token,"Title":line,
+                         "Description":description,"Due Date":deadline,
+                         "Status":"Active"})
+    return rows
+
+
 async def _mta_text_records(page: Page) -> list[dict[str, str]]:
     """Fallback parser for MTA C&D's label/value accessibility rendering."""
     text = await page.locator("body").inner_text()
@@ -311,7 +334,9 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
         missing = [marker for marker in source.markers if marker.lower() not in body.lower()]
         if missing:
             raise RuntimeError(f"Missing success markers: {', '.join(missing)}")
-        if source.agency == "MARTA" and "Anticipated" in source.name:
+        if source.agency == "MARTA" and "Current" in source.name:
+            records = await _marta_current_records(page)
+        elif source.agency == "MARTA" and "Anticipated" in source.name:
             records = await _marta_text_records(page)
         else:
             records = await (_link_records(page) if source.mode == "links" else _table_records(page))

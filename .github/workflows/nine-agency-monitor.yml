@@ -1,4 +1,4 @@
-name: Eight-agency transit monitor
+name: Ten-agency transit monitor
 
 on:
   workflow_dispatch:
@@ -126,7 +126,7 @@ jobs:
           ls -l "state/input/Transit Agency Monitor.xlsx" \
                 "orchestrator/state/input/Transit Agency Monitor.xlsx"
 
-      - name: Run eight-agency orchestrator in staging mode
+      - name: Run ten-agency orchestrator in staging mode
         if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && inputs.diagnostic_excluded != true
         shell: bash
         run: |
