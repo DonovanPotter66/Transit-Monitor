@@ -48,6 +48,20 @@ def table_headers(ws, table):
 def priority_key(value):
     # Unknown/blank priorities sort below explicitly Low items.
     return {"High": 0, "Medium": 1, "Low": 2}.get(str(value or "").strip().title(), 3)
+
+def valid_opportunity_row(row):
+    """Defensive publication gate for payloads produced by older parsers."""
+    agency = str(row.get("agency") or "").strip()
+    oid = str(row.get("opportunity_id") or "").strip()
+    title = str(row.get("project_name") or "").strip()
+    if not agency or not oid or not title:
+        return False
+    if agency == "BART":
+        # Never republish PeopleSoft search labels or generated AUTO IDs as
+        # solicitation identifiers, even if an old payload contains them.
+        import re
+        return bool(re.fullmatch(r"BARTD[-\s][A-Z0-9]+(?:[-][A-Z0-9]+)*", oid, re.I))
+    return True
 def set_matrix(ws, start_cell, rows):
     from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
     col, row = coordinate_from_string(start_cell); c0 = column_index_from_string(col)
@@ -80,7 +94,8 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         for row in reg_rows[1:]:
             if headers.get("Opportunity ID") is not None and headers.get("First Seen Date") is not None and row[headers["Opportunity ID"]]:
                 prior[str(row[headers["Opportunity ID"]])] = row[headers["First Seen Date"]]
-    opps = payload.get("opportunities", []); changes = payload.get("changes", []); sources = payload.get("sources", [])
+    opps = [o for o in payload.get("opportunities", []) if valid_opportunity_row(o)]
+    changes = payload.get("changes", []); sources = payload.get("sources", [])
     run = payload.get("run", {}); run_date = typed_date(run.get("run_date"))
     agencies = sorted({x.get("agency") for x in sources + opps if x.get("agency")})
     high = [o for o in opps if o.get("priority") == "High"]

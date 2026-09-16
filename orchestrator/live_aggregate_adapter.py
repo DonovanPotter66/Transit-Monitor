@@ -19,6 +19,19 @@ def looks_like_date_id(value: str) -> bool:
     """Reject a date/time scraped from a row as an opportunity identifier."""
     return bool(re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}(?:\s+.*)?", value.strip()))
 
+def valid_source_row(item) -> bool:
+    """Reject portal controls before they can become workbook opportunities."""
+    oid = str(item.opportunity_id or "").strip()
+    title = str(item.project_name or "").strip()
+    if not oid or not title:
+        return False
+    if item.agency == "BART":
+        # BART's PeopleSoft page renders search controls as pseudo-rows.  A
+        # published BART opportunity must carry the agency's BARTD identifier;
+        # AUTO IDs are never acceptable for this source.
+        return bool(re.fullmatch(r"BARTD[-\s][A-Z0-9]+(?:[-][A-Z0-9]+)*", oid, re.I))
+    return True
+
 async def collect(names, source_names):
     selected = [s for s in SOURCES if (not names or s.agency in names) and (not source_names or s.name in source_names)]
     if not selected: raise RuntimeError(f"no configured sources for {sorted(names)}")
@@ -28,6 +41,8 @@ async def collect(names, source_names):
     for result in results:
         rows=[]
         for item in result.opportunities:
+            if not valid_source_row(item):
+                continue
             oid = str(item.opportunity_id or "").strip()
             # Generic parser placeholders are not globally unique. Scope only
             # those placeholders by agency; preserve every real source ID.
