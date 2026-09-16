@@ -9,7 +9,6 @@ from pathlib import Path
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:T[^\s]+)?$")
 PRIORITIES = {"High", "Medium", "Low"}
-STATUSES = {"Open", "Closed", "Awarded", "Cancelled", "Unknown"}
 
 def fail(message):
     raise ValueError(message)
@@ -45,19 +44,22 @@ def main(source, destination):
         last_success = date_value(source_item.get("last_successful_check"), "sources.last_successful_check")
         source_agencies[agency] = source_name
         sources.append({"agency":agency,"source_name":source_name,"source_url":source_url,"checked_at":checked,"check_result":check,"last_successful_check":last_success,"items_found":int(source_item.get("items_found",0)),"consecutive_failures":int(source_item.get("consecutive_failures",0)),"failure_reason":str(source_item.get("failure_reason", "")),"health_indicator":str(source_item.get("health_indicator", "Unknown")),"source_sha256":str(source_item.get("source_sha256", ""))})
-    opportunities, ids, id_agencies = [], set(), {}
+    opportunities, ids, exact_keys = [], set(), set()
     for item in raw.get("opportunities", []):
         agency = required(item, "agency"); oid = required(item, "opportunity_id")
-        if oid in ids: fail(f"duplicate opportunity_id: {oid}")
-        if oid in id_agencies and id_agencies[oid] != agency: fail(f"conflicting agencies for opportunity_id: {oid}")
-        ids.add(oid); id_agencies[oid] = agency
+        project_name = required(item, "project_name")
+        # An agency may reuse an identifier across distinct procurements. Only
+        # an exact duplicate source row is invalid; title/source context keeps
+        # separate records distinguishable without inventing a new ID.
+        exact_key = (agency, str(item.get("source_name", "")), oid, project_name)
+        if exact_key in exact_keys: fail(f"duplicate opportunity row: {agency} / {oid} / {project_name}")
+        exact_keys.add(exact_key); ids.add(oid)
         priority = required(item, "priority")
         if priority not in PRIORITIES: fail(f"unknown priority: {priority}")
         item_status = required(item, "status")
-        if item_status not in STATUSES: fail(f"unknown status: {item_status}")
         first_seen = date_value(item.get("first_seen_date") or run_date, "opportunities.first_seen_date", True)
         last_seen = date_value(item.get("last_seen_date") or run_date, "opportunities.last_seen_date", True)
-        opportunities.append({"agency":agency,"opportunity_id":oid,"project_name":required(item,"project_name"),"description":str(item.get("description", "")),"posted_date":date_value(item.get("posted_date"),"opportunities.posted_date"),"due_date":date_value(item.get("due_date"),"opportunities.due_date"),"status":item_status,"priority":priority,"pgh_wong_relevance":str(item.get("pgh_wong_relevance", "")),"change_status":str(item.get("change_status", "")),"first_seen_date":first_seen,"last_seen_date":last_seen,"source_url":required(item,"source_url"),"opportunity_url":str(item.get("opportunity_url", item.get("source_url"))),"why_it_matters":str(item.get("why_it_matters", item.get("pgh_wong_relevance", ""))),"next_step":str(item.get("next_step", "Review solicitation")),"notes":str(item.get("notes", ""))})
+        opportunities.append({"agency":agency,"opportunity_id":oid,"project_name":project_name,"description":str(item.get("description", "")),"posted_date":date_value(item.get("posted_date"),"opportunities.posted_date"),"due_date":date_value(item.get("due_date"),"opportunities.due_date"),"status":item_status,"priority":priority,"pgh_wong_relevance":str(item.get("pgh_wong_relevance", "")),"change_status":str(item.get("change_status", "")),"first_seen_date":first_seen,"last_seen_date":last_seen,"source_url":required(item,"source_url"),"opportunity_url":str(item.get("opportunity_url", item.get("source_url"))),"why_it_matters":str(item.get("why_it_matters", item.get("pgh_wong_relevance", ""))),"next_step":str(item.get("next_step", "Review solicitation")),"notes":str(item.get("notes", ""))})
     changes = []
     for change in raw.get("changes", []):
         oid = required(change, "opportunity_id")

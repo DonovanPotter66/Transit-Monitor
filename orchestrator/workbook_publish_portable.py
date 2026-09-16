@@ -49,6 +49,30 @@ def priority_key(value):
     # Unknown/blank priorities sort below explicitly Low items.
     return {"High": 0, "Medium": 1, "Low": 2}.get(str(value or "").strip().title(), 3)
 
+def apply_hierarchy_and_layout(wb):
+    """Make the workbook's navigation match the source-to-action hierarchy."""
+    preferred = [
+        "Dashboard", "Summary", "Opportunity Register", "High Priority Pursuit List",
+        "Pursuit Management",
+    ]
+    agency_pages = [
+        name for name in wb.sheetnames
+        if name not in preferred and name not in {"Source Health"}
+    ]
+    ordered = [name for name in preferred + agency_pages + ["Source Health"] if name in wb.sheetnames]
+    wb._sheets = [wb[name] for name in ordered]
+    for ws in wb.worksheets:
+        ws.sheet_view.zoomScale = 90
+        for table in ws.tables.values():
+            min_col, min_row, max_col, _ = range_boundaries(table.ref)
+            ws.freeze_panes = f"{get_column_letter(min_col)}{min_row + 1}"
+            headers = table_headers(ws, table)
+            for offset, header in enumerate(headers):
+                if "date" in str(header or "").strip().lower():
+                    col = min_col + offset
+                    for row in range(min_row + 1, ws.max_row + 1):
+                        ws.cell(row, col).number_format = "mm/dd/yyyy"
+
 def valid_opportunity_row(row):
     """Defensive publication gate for payloads produced by older parsers."""
     agency = str(row.get("agency") or "").strip()
@@ -240,6 +264,7 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         for row in ws.iter_rows():
             for cell in row:
                 if isinstance(cell.value, str) and any(err in cell.value for err in ("#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A")): raise ValueError(f"formula error detected: {ws.title}!{cell.coordinate}")
+    apply_hierarchy_and_layout(wb)
     output.parent.mkdir(parents=True, exist_ok=True); wb.save(output)
     manifest = {"schema_version":"workbook-result-v1","source_id":payload.get("source_id"),"source_sha256":payload.get("source_sha256"),"pipeline":"workbook","canonical_path":str(canonical),"canonical_sha256":sha(canonical.read_bytes()),"output_path":str(output),"output_sha256":sha(output.read_bytes()),"output_size_bytes":output.stat().st_size}
     manifest_path.write_text(json.dumps(manifest, indent=2)+"\n", encoding="utf-8")

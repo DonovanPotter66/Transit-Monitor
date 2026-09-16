@@ -62,7 +62,7 @@ async def collect(names, source_names):
             if not valid_source_row(item):
                 continue
             oid = str(item.opportunity_id or "").strip()
-            rows.append({"agency":item.agency,"source_name":item.source_name,"source_url":item.source_url,"opportunity_id":oid,"project_name":item.project_name,"description":item.description,"posted_date":iso(item.posted_date),"due_date":iso(item.due_date),"status":"Open" if item.status.lower() in {"active","open","listed"} else ("Closed" if "closed" in item.status.lower() else "Unknown"),"priority":item.priority,"pgh_wong_relevance":item.relevance,"change_status":item.change_status,"last_seen_date":checked.date().isoformat(),"opportunity_url":item.opportunity_url or item.source_url,"notes":item.notes})
+            rows.append({"agency":item.agency,"source_name":item.source_name,"source_url":item.source_url,"opportunity_id":oid,"project_name":item.project_name,"description":item.description,"posted_date":iso(item.posted_date),"due_date":iso(item.due_date),"status":str(item.status or "").strip(),"priority":item.priority,"pgh_wong_relevance":item.relevance,"change_status":item.change_status,"last_seen_date":checked.date().isoformat(),"opportunity_url":item.opportunity_url or item.source_url,"notes":item.notes})
         opportunities.extend(rows)
         evidence=json.dumps(rows,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()
         success=result.status != "Failed"
