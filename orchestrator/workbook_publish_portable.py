@@ -191,6 +191,15 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
     for column, header in zip(pm_table.tableColumns, pm_headers):
         column.name = header
     pm_table.ref = f"{get_column_letter(pm_min_col)}{pm_min_row}:{get_column_letter(pm_min_col + len(pm_headers) - 1)}{max(pm_min_row + 1, pm_min_row + len(opps) + 1)}"
+    # Rows that fell outside the old table range remain visible in Excel even
+    # after the table is resized. Clear the entire prior used area so stale
+    # labels or legacy IDs cannot appear beneath the current table.
+    clear_to = max(pm_ws.max_row, pm_old_max_row, pm_min_row + len(opps) + 1)
+    for row in range(pm_min_row + 1, clear_to + 1):
+        for col in range(pm_min_col, pm_min_col + len(pm_headers)):
+            cell = pm_ws.cell(row, col)
+            cell.value = None
+            cell.hyperlink = None
     pm_rows = []
     for o in sorted(opps, key=lambda x: (priority_key(x.get("priority")), str(x.get("agency") or ""), str(x.get("opportunity_id") or ""))):
         values = {
