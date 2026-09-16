@@ -56,10 +56,22 @@ def valid_opportunity_row(row):
     title = str(row.get("project_name") or "").strip()
     if not agency or not oid or not title:
         return False
+    import re
+    if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}(?:\s+.*)?", oid):
+        return False
+    if not re.search(r"\d", oid):
+        return False
+    if re.fullmatch(r"(?:[A-Za-z ]+\|)?(?:SRC|AUTO)[-_][A-Za-z0-9-]+", oid, re.I):
+        return False
+    if oid.casefold() == title.casefold() and not re.search(r"\d", oid):
+        return False
+    if oid.casefold() in {"program", "philadelphia", "status", "contract type", "event name", "solicitation id", "end date", "start date", "description", "project", "title"}:
+        return False
+    if re.search(r"\s", oid) and not re.fullmatch(r"(?:RFP|RFQ|IFB|RFI|P|AE)\s*[-#]?\s*[A-Z0-9-]*\d[A-Z0-9-]*", oid, re.I):
+        return False
     if agency == "BART":
         # Never republish PeopleSoft search labels or generated AUTO IDs as
         # solicitation identifiers, even if an old payload contains them.
-        import re
         return bool(re.fullmatch(r"BARTD[-\s][A-Z0-9]+(?:[-][A-Z0-9]+)*", oid, re.I))
     return True
 def set_matrix(ws, start_cell, rows):
