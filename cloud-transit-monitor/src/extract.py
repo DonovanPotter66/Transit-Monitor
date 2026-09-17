@@ -3,11 +3,17 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import date
-from typing import Iterable
+from typing import Iterable, Any
 
-from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
-from playwright.async_api import Browser, Page, async_playwright
+
+try:
+    from playwright.async_api import Browser, Page, async_playwright
+except ModuleNotFoundError:  # Allows pure parser tests without browser deps installed.
+    Browser = Page = Any  # type: ignore
+
+    def async_playwright():  # type: ignore
+        raise RuntimeError("playwright is required for live source checks")
 
 from .models import CheckResult, Opportunity, Source
 
@@ -108,7 +114,10 @@ def normalize(source: Source, records: list[dict[str, str]]) -> list[Opportunity
                 title = clean(re.split(r"\b\d{1,2}/\d{1,2}/\d{4}\b", title, maxsplit=1)[0])[:180]
         if not opportunity_id and source.link_id_pattern:
             link = clean(str(record.get("_url", "")))
-            match = re.search(source.link_id_pattern, link, re.I)
+            # Link-based sources often put the solicitation number in the
+            # visible link text rather than the PDF URL.
+            haystack = " ".join((clean(str(record.get("Title", ""))), link))
+            match = re.search(source.link_id_pattern, haystack, re.I)
             opportunity_id = clean(match.group(0)) if match else ""
         # Never infer an ID from a title or row position. If the source
         # contract did not identify an explicit field/link key, this row is
@@ -250,6 +259,55 @@ async def _link_records(page: Page) -> list[dict[str, str]]:
           .map(a => ({Title: a.innerText.replace(/\\s+/g, ' ').trim(), _url: a.href}))"""
     )
 
+
+def _bart_records_from_text(text: str) -> list[dict[str, str]]:
+    """Keep only BART PeopleSoft solicitation-result rows.
+
+    The BART portal exposes many visible layout/control tables.  The stable
+    result structure in the runner capture is the PeopleSoft result stream:
+    the result header followed by records bounded by official BARTD IDs.
+    """
+    text = clean(text)
+    start = text.lower().find("solicitation id event name start date")
+    if start < 0:
+        return []
+    stream = text[start:]
+    id_matches = list(re.finditer(r"\bBARTD[- ]?[A-Z0-9]+(?:-[A-Z0-9]+)*\b", stream, re.I))
+    rows: list[dict[str, str]] = []
+    datetime_pattern = re.compile(r"\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}\s*[AP]M\s*(?:P[DS]T)?", re.I)
+    status_pattern = re.compile(r"\b(accepted|active|open|na|sb|dbe|mwbe(?:,sb)?|micr)\b", re.I)
+    for index, match in enumerate(id_matches):
+        end = id_matches[index + 1].start() if index + 1 < len(id_matches) else len(stream)
+        segment = clean(stream[match.end():end])
+        dates = list(datetime_pattern.finditer(segment))
+        if len(dates) < 2:
+            continue
+        title = clean(segment[:dates[0].start()])
+        if not title or title.lower() in {"event name", "search criteria"}:
+            continue
+        tail = clean(segment[dates[1].end():])
+        status_match = status_pattern.search(tail)
+        electronic = "Yes" if re.search(r"\bYes\b\s*$", tail, re.I) else ("No" if re.search(r"\bNo\b\s*$", tail, re.I) else "")
+        rows.append({
+            "Solicitation Id": clean(match.group(0)),
+            "Event Name": title,
+            "Start Date": clean(dates[0].group(0)),
+            "End Date": clean(dates[1].group(0)),
+            "Status": clean(status_match.group(1)).title() if status_match else "Active",
+            "Electronic Bid": electronic,
+        })
+    return rows
+
+
+async def _bart_text_records(page: Page) -> list[dict[str, str]]:
+    """Extract BART's concatenated PeopleSoft result stream.
+
+    The captured page has the result headings and all result cells in one
+    rendered text stream; the surrounding 34 tables are layout/control
+    tables.  BART solicitation IDs are the stable row boundary.
+    """
+    return _bart_records_from_text(await page.locator("body").inner_text())
+
 async def _mbta_frame_records(page: Page) -> list[dict[str, str]]:
     """MBTA currently renders the future-project table in a child frame."""
     records: list[dict[str, str]] = []
@@ -325,25 +383,110 @@ async def _marta_text_records(page: Page) -> list[dict[str, str]]:
 
 async def _marta_current_records(page: Page) -> list[dict[str, str]]:
     """Parse active MARTA opportunity blocks from the current-opportunities page."""
-    text = await page.locator("body").inner_text()
+    return _marta_current_records_from_text(await page.locator("body").inner_text())
+
+
+def _marta_current_records_from_text(text: str) -> list[dict[str, str]]:
+    """Parse active MARTA rows from the live Current Opportunities content.
+
+    The current page captured by the runner is headed by "Current
+    Opportunities Documents"; records are blocks containing a MARTA
+    solicitation token and page-provided deadline/description labels.
+    """
     lines=[clean(x) for x in text.splitlines() if clean(x)]
+    lower_lines=[line.lower() for line in lines]
     rows=[]
+    try:
+        start = lower_lines.index("current opportunities documents") + 1
+    except ValueError:
+        start = 0
+    end = next((i for i in range(start, len(lines))
+                if lower_lines[i] in {"bid results", "anticipated procurements", "vendor login"}), len(lines))
+    lines = lines[start:end]
     for i, line in enumerate(lines):
         ident=re.search(r"\b(?:RFP|RFQ|IFB|RFI|AE)\s*-?\s*[A-Z]?\d{4,}\b", line, re.I)
         if not ident: continue
         token=clean(ident.group(0).replace(" ", " "))
         deadline=""
         description=""
+        title=clean(line.replace(ident.group(0), "").strip(" :-–—")) or line
         for follow in lines[i+1:i+25]:
             if follow.lower().startswith("description:"):
                 description=clean(follow.split(":",1)[1])
+            elif not description and not looks_like_date_or_timestamp(follow) and not re.search(r"proposal/quote|submittal|download|addendum", follow, re.I):
+                description=follow
             if "proposal/quote submittal to:" in follow.lower():
                 deadline=clean(follow.split(":",1)[1]); break
+            if re.search(r"\b(?:due|deadline|submittal|opening)\b", follow, re.I) and looks_like_date_or_timestamp(follow):
+                deadline=follow
+                break
         if deadline:
-            rows.append({"Solicitation Number":token,"Title":line,
+            rows.append({"Solicitation Number":token,"Title":title,
                          "Description":description,"Due Date":deadline,
                          "Status":"Active"})
     return rows
+
+
+def _records_from_bid_links(links: list[dict[str, str]], id_pattern: str, agency: str) -> list[dict[str, str]]:
+    """Convert source-specific bid document links into solicitation records."""
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for link in links:
+        label = clean(str(link.get("Title", "")))
+        url = clean(str(link.get("_url", "")))
+        if not label or re.fullmatch(r"(home|about|contact|calendar|procurement|vendor portal|terms|privacy|facebook|twitter|linkedin|filter by .+)", label, re.I):
+            continue
+        match = re.search(id_pattern, label, re.I)
+        if not match:
+            continue
+        if agency == "UTA" and not re.search(r"\.(?:pdf|docx?|xlsx?)($|\?)|/documents?/|solicitation|procurement", url, re.I):
+            continue
+        opportunity_id = clean(match.group(0))
+        if opportunity_id.lower() in seen:
+            continue
+        title = clean((label[:match.start()] + " " + label[match.end():]).strip(" :-–—"))
+        if not title:
+            title = label
+        date_match = re.search(r"\b(?:due|closing|close|opening|posted|release)[^,;|]{0,40}?(\d{1,2}/\d{1,2}/\d{2,4})", label, re.I)
+        rows.append({
+            "Solicitation Number": opportunity_id,
+            "Title": title,
+            "Due Date": date_match.group(1) if date_match else "",
+            "Status": "Active",
+            "_url": url,
+        })
+        seen.add(opportunity_id.lower())
+    return rows
+
+
+async def _septa_bid_records(page: Page, source: Source) -> list[dict[str, str]]:
+    """Extract SEPTA bid card/list records without nav/filter links."""
+    links = await page.evaluate(
+        """() => {
+          const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
+          const blocked = e => e.closest('nav, header, footer, aside, form, [role="navigation"]');
+          const roots = [...document.querySelectorAll('main article, main .wp-block-post, main li, main .card, main .bid, main .procurement, main a[href]')];
+          return roots.flatMap(root => {
+            const anchor = root.matches && root.matches('a[href]') ? root : root.querySelector && root.querySelector('a[href]');
+            if (!anchor || blocked(anchor)) return [];
+            const title = clean(root.innerText || anchor.innerText);
+            if (!title || title.length < 8) return [];
+            return [{Title: title, _url: anchor.href}];
+          });
+        }"""
+    )
+    return _records_from_bid_links(links, source.link_id_pattern, "SEPTA")
+
+
+async def _uta_solicitation_records(page: Page, source: Source) -> list[dict[str, str]]:
+    """Extract only UTA solicitation document links from current page labels."""
+    links = await page.evaluate(
+        """() => [...document.querySelectorAll('main a[href], article a[href], .content a[href], #content a[href]')]
+          .filter(a => !a.closest('nav, header, footer, aside, [role="navigation"]'))
+          .map(a => ({Title: (a.innerText || '').replace(/\\s+/g, ' ').trim(), _url: a.href}))
+          .filter(item => item.Title.length > 8)"""
+    )
+    return _records_from_bid_links(links, source.link_id_pattern, "UTA")
 
 
 async def _mta_text_records(page: Page) -> list[dict[str, str]]:
@@ -392,10 +535,16 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
         missing = [marker for marker in source.markers if marker.lower() not in body.lower()]
         if missing:
             raise RuntimeError(f"Missing success markers: {', '.join(missing)}")
-        if source.agency == "MARTA" and "Current" in source.name:
+        if source.agency == "BART":
+            records = await _bart_text_records(page)
+        elif source.agency == "MARTA" and "Current" in source.name:
             records = await _marta_current_records(page)
         elif source.agency == "MARTA" and "Anticipated" in source.name:
             records = await _marta_text_records(page)
+        elif source.agency == "SEPTA" and "Current Bids" in source.name:
+            records = await _septa_bid_records(page, source)
+        elif source.agency == "UTA" and "Solicitation" in source.name:
+            records = await _uta_solicitation_records(page, source)
         else:
             records = await (_link_records(page) if source.mode == "links" else _table_records(page, source))
             if source.agency == "MTA" and not records:
