@@ -23,6 +23,12 @@ class Source:
     id_headers: tuple[str, ...] = ()
     id_pattern: str = ""
     link_id_pattern: str = ""
+    # Evidence-backed DOM contract.  A source may restrict extraction to a
+    # table/grid whose observed headers match this set; an empty value keeps
+    # the legacy generic extractor for sources not yet established.
+    record_selector: str = ""
+    required_headers: tuple[str, ...] = ()
+    url_pattern: str = ""
 
 
 @dataclass

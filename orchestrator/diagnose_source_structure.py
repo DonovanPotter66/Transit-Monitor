@@ -59,7 +59,9 @@ async def capture(page, source):
         }"""
     )
     try:
-        table_records = await _table_records(page)
+        # Exercise the same evidence-backed selector contract used by the
+        # production parser, so the diagnostic's counts are meaningful.
+        table_records = await _table_records(page, source)
     except Exception:
         table_records = []
     try:

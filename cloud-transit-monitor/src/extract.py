@@ -147,12 +147,27 @@ def normalize(source: Source, records: list[dict[str, str]]) -> list[Opportunity
     return output
 
 
-async def _table_records(page: Page) -> list[dict[str, str]]:
+async def _table_records(page: Page, source: Source | None = None) -> list[dict[str, str]]:
+    contract = {
+        "recordSelector": source.record_selector if source else "",
+        "requiredHeaders": [x.lower() for x in (source.required_headers if source else ())],
+    }
     records = await page.evaluate(
-        """() => {
+        """(contract) => {
           const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
           const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
-          const tables = [...document.querySelectorAll('table')].filter(visible);
+          const candidates = contract.recordSelector
+            ? [...document.querySelectorAll(contract.recordSelector)]
+            : [...document.querySelectorAll('table')];
+          const tables = candidates.filter(visible).filter(table => {
+            if (!contract.requiredHeaders.length) return true;
+            let hs = [...table.querySelectorAll('thead th')].map(x => clean(x.innerText).toLowerCase());
+            if (!hs.length) {
+              const first = table.querySelector('tr');
+              if (first) hs = [...first.querySelectorAll('th,td')].map(x => clean(x.innerText).toLowerCase());
+            }
+            return contract.requiredHeaders.every(h => hs.includes(h));
+          });
           const out = [];
           for (const table of tables) {
             const headerNodes = [...table.querySelectorAll('thead th')];
@@ -174,7 +189,8 @@ async def _table_records(page: Page) -> list[dict[str, str]]:
             }
           }
           if (out.length) return out;
-          const gridRows = [...document.querySelectorAll('[role="row"]')].filter(visible);
+          const gridRoot = contract.recordSelector ? document.querySelector(contract.recordSelector) : document;
+          const gridRows = [...gridRoot.querySelectorAll('[role="row"]')].filter(visible);
           let headers = [];
           for (const row of gridRows) {
             const hs = [...row.querySelectorAll('[role="columnheader"]')].map(x => clean(x.innerText));
@@ -190,7 +206,7 @@ async def _table_records(page: Page) -> list[dict[str, str]]:
             if (Object.values(item).some(Boolean)) out.push(item);
           }
           return out;
-        }"""
+        }""", contract
     )
     return records
 
@@ -338,6 +354,8 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
     try:
         await page.goto(source.url, wait_until="domcontentloaded", timeout=90_000)
         await page.wait_for_timeout(4_000)
+        if source.url_pattern and not re.search(source.url_pattern, page.url, re.I):
+            raise RuntimeError(f"Unexpected final URL: {page.url}")
         body = clean(await page.locator("body").inner_text(timeout=20_000))
         missing = [marker for marker in source.markers if marker.lower() not in body.lower()]
         if missing:
@@ -347,7 +365,7 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
         elif source.agency == "MARTA" and "Anticipated" in source.name:
             records = await _marta_text_records(page)
         else:
-            records = await (_link_records(page) if source.mode == "links" else _table_records(page))
+            records = await (_link_records(page) if source.mode == "links" else _table_records(page, source))
             if source.agency == "MTA" and not records:
                 records = await _mta_text_records(page)
             if source.agency == "WMATA":
