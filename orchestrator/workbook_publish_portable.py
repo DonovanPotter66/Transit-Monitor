@@ -253,7 +253,8 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         for table in list(ws.tables.values()):
             if table.name.startswith("Current_"):
                 suffix = table.name[len("Current_"):]
-                if suffix.replace("_", " ") not in {a.replace(" ", "_") for a in agencies if a not in failed_agencies} and suffix not in {a for a in agencies if a not in failed_agencies}:
+                active_keys = {str(a).replace(" ", "_") for a in agencies if a not in failed_agencies}
+                if suffix not in active_keys:
                     write_rows(ws, table, [])
     # Make human-facing columns readable.
     for ws in wb.worksheets:
