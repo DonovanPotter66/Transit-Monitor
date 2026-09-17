@@ -1,9 +1,12 @@
 from src.extract import (
     _bart_records_from_text,
     _marta_current_records_from_text,
+    _marta_records_from_links,
+    _page_text_from_html_url,
     _mta_records_from_text,
     _records_from_bid_links,
 )
+from unittest.mock import patch
 import unittest
 
 
@@ -56,6 +59,20 @@ class AgencyExtractorTests(unittest.TestCase):
         self.assertEqual(rows[0]["Due Date"], "9/22/2026 2:00 PM")
         self.assertEqual(rows[1]["Due Date"], "10/01/2026 2:00 PM")
 
+    def test_marta_current_parser_can_use_opportunity_links(self):
+        links = [
+            {"Title": "Current Opportunities Documents", "_url": "https://oracle.example/"},
+            {"Title": "On-Call Planning Support Services Request for Proposal (RFP) - RFP P50816", "_url": "https://martabid.example/opportunity/1"},
+            {"Title": "Bid Documents", "_url": "https://martabid.example/docs/1"},
+            {"Title": "Structural Inspection Engineering Services Architecture/Engineering (A/E) - AE50821", "_url": "https://martabid.example/opportunity/2"},
+        ]
+
+        rows = _marta_records_from_links(links)
+
+        self.assertEqual([row["Solicitation Number"] for row in rows], ["RFP P50816", "AE50821"])
+        self.assertEqual(rows[0]["Title"], "On-Call Planning Support Services Request for Proposal (RFP)")
+        self.assertEqual(rows[0]["_url"], "https://martabid.example/opportunity/1")
+
     def test_mta_parser_uses_active_solicitation_label_blocks(self):
         text = """
         Active Solicitations
@@ -77,6 +94,24 @@ class AgencyExtractorTests(unittest.TestCase):
         self.assertEqual([row["Solicitation Number"] for row in rows], ["0000541781", "E31634"])
         self.assertEqual(rows[0]["Title"], "CBTC for 6th Ave Line, 63rd St Line and DeKalb Interlocking")
         self.assertEqual(rows[1]["Current Opening/Due Date"], "9/22/2026")
+
+    def test_static_html_text_fallback_preserves_procurement_text(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b"<html><script>ignore()</script><body><h2>Active Solicitations</h2><p>* Solicitation number: 0000541781</p></body></html>"
+
+        with patch("src.extract.urlopen", return_value=FakeResponse()):
+            text = _page_text_from_html_url("https://example.test/current")
+
+        self.assertIn("Active Solicitations", text)
+        self.assertIn("Solicitation number: 0000541781", text)
+        self.assertNotIn("ignore()", text)
 
     def test_septa_link_parser_keeps_bid_records_not_navigation(self):
         links = [

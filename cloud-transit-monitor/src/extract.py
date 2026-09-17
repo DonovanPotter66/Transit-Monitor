@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import date
+from html.parser import HTMLParser
 from typing import Iterable, Any
+from urllib.request import Request, urlopen
 
 from dateutil import parser as date_parser
 
@@ -383,7 +385,22 @@ async def _marta_text_records(page: Page) -> list[dict[str, str]]:
 
 async def _marta_current_records(page: Page) -> list[dict[str, str]]:
     """Parse active MARTA opportunity blocks from the current-opportunities page."""
-    return _marta_current_records_from_text(await page.locator("body").inner_text())
+    text = await page.locator("body").inner_text()
+    rows = _marta_current_records_from_text(text)
+    if rows:
+        return rows
+    link_rows = await page.evaluate(
+        """() => {
+          const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
+          return [...document.querySelectorAll('a[href]')].flatMap(anchor => {
+            const label = clean(anchor.innerText || anchor.textContent || anchor.getAttribute('aria-label') || '');
+            if (!label.match(/\\b(?:(?:RFP|RFQ|IFB|RFI)\\s*-?\\s*[A-Z]?\\d{4,}[A-Z]?|AE\\d{4,}[A-Z]?)\\b/i)) return [];
+            if (label.match(/bid documents|back to top|current opportunities documents/i)) return [];
+            return [{Title: label, _url: anchor.href}];
+          });
+        }"""
+    )
+    return _marta_records_from_links(link_rows, text)
 
 
 def _marta_current_records_from_text(text: str) -> list[dict[str, str]]:
@@ -425,6 +442,85 @@ def _marta_current_records_from_text(text: str) -> list[dict[str, str]]:
                          "Description":description,"Due Date":deadline,
                          "Status":"Active"})
     return rows
+
+
+def _marta_records_from_links(links: list[dict[str, str]], page_text: str = "") -> list[dict[str, str]]:
+    """Build MARTA opportunity records from the visible opportunity links."""
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    normalized_text = clean(page_text)
+    for link in links:
+        label = clean(str(link.get("Title", "")))
+        ident = re.search(r"\b(?:(?:RFP|RFQ|IFB|RFI)\s*-?\s*[A-Z]?\d{4,}[A-Z]?|AE\d{4,}[A-Z]?)\b", label, re.I)
+        if not ident:
+            continue
+        token = clean(ident.group(0)).upper()
+        if token in seen:
+            continue
+        title = clean(label.replace(ident.group(0), "").strip(" :-–—")) or label
+        due = ""
+        if normalized_text and label in normalized_text:
+            tail = normalized_text.split(label, 1)[1][:1500]
+            due_match = re.search(r"Proposal/Quote Submittal To:\s*(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)", tail, re.I)
+            if due_match:
+                due = clean(due_match.group(1))
+        rows.append({
+            "Solicitation Number": token,
+            "Title": title,
+            "Due Date": due,
+            "Status": "Active",
+            "_url": clean(str(link.get("_url", ""))),
+        })
+        seen.add(token)
+    return rows
+
+
+class _VisibleTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in {"script", "style", "noscript"}:
+            self._skip_depth += 1
+        elif tag.lower() in {"br", "p", "div", "li", "tr", "td", "th", "h1", "h2", "h3", "h4"}:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"script", "style", "noscript"} and self._skip_depth:
+            self._skip_depth -= 1
+        elif tag.lower() in {"p", "div", "li", "tr", "td", "th", "h1", "h2", "h3", "h4"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth:
+            self.parts.append(data)
+
+    def text(self) -> str:
+        return "\n".join(clean(part) for part in self.parts if clean(part))
+
+
+def _page_text_from_html_url(url: str) -> str:
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0 transit-monitor/1.0"})
+    with urlopen(request, timeout=45) as response:
+        html = response.read()
+    parser = _VisibleTextParser()
+    parser.feed(html.decode("utf-8", "replace"))
+    return parser.text()
+
+
+async def _html_text_fallback_records(source: Source) -> list[dict[str, str]]:
+    """Fetch static HTML text when the browser-rendered body is incomplete."""
+    try:
+        text = await asyncio.to_thread(_page_text_from_html_url, source.url)
+    except Exception:
+        return []
+    if source.agency == "MTA":
+        return _mta_records_from_text(text)
+    if source.agency == "MARTA" and "Current" in source.name:
+        return _marta_current_records_from_text(text)
+    return []
 
 
 def _records_from_bid_links(links: list[dict[str, str]], id_pattern: str, agency: str) -> list[dict[str, str]]:
@@ -568,12 +664,12 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
             raise RuntimeError(f"Unexpected final URL: {page.url}")
         body = clean(await page.locator("body").inner_text(timeout=20_000))
         missing = [marker for marker in source.markers if marker.lower() not in body.lower()]
-        if missing:
-            raise RuntimeError(f"Missing success markers: {', '.join(missing)}")
         if source.agency == "BART":
             records = await _bart_text_records(page)
         elif source.agency == "MARTA" and "Current" in source.name:
             records = await _marta_current_records(page)
+            if not records:
+                records = await _html_text_fallback_records(source)
         elif source.agency == "MARTA" and "Anticipated" in source.name:
             records = await _marta_text_records(page)
         elif source.agency == "SEPTA" and "Current Bids" in source.name:
@@ -582,7 +678,11 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
             records = await _uta_solicitation_records(page, source)
         elif source.agency == "MTA":
             records = await _mta_text_records(page)
+            if not records:
+                records = await _html_text_fallback_records(source)
         else:
+            if missing:
+                raise RuntimeError(f"Missing success markers: {', '.join(missing)}")
             records = await (_link_records(page) if source.mode == "links" else _table_records(page, source))
             if source.agency == "WMATA":
                 records = _wmata_candidate_records(records)
@@ -591,6 +691,8 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
             if source.agency == "MBTA" and not records:
                 records = await _mbta_text_records(page)
         opportunities = normalize(source, records)
+        if missing and not opportunities:
+            raise RuntimeError(f"Missing success markers: {', '.join(missing)}")
         if not opportunities:
             raise RuntimeError("Expected populated opportunity rows were not found.")
         return opportunities
