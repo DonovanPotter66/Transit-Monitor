@@ -280,6 +280,10 @@ class Orchestrator:
         except subprocess.TimeoutExpired as e: raise RuntimeError("timeout: workbook payload normalization") from e
         except subprocess.CalledProcessError as e: raise RuntimeError(f"payload_validation: {e.stderr[-1500:]}") from e
         payload=json.loads(payload_path.read_text(encoding="utf-8")); payload["source_id"]=item["source_id"]; payload["source_sha256"]=item["source_hash"]; payload_path.write_text(json.dumps(payload,sort_keys=True,indent=2)+"\n",encoding="utf-8")
+        if not payload.get("opportunities"):
+            # Do not build or promote a blank workbook when acquisition has
+            # failed or every row was rejected by source-fidelity validation.
+            raise RuntimeError("empty_acquisition: refusing workbook publication with zero verified opportunities")
         bundle=destination.parent/"workbook_bundle"; bundle.mkdir(parents=True,exist_ok=True); output=bundle/"Transit Agency Monitor.xlsx"; manifest=bundle/"manifest.json"; cmd=([str(node),str(script)] if spec.get("adapter") == "workbook" else [str(python),str(script)])+[str(canonical),str(payload_path),str(output),str(manifest)]
         try:
             completed=subprocess.run(cmd,cwd=str(self.base),check=False,capture_output=True,text=True,timeout=int(spec.get("timeout_seconds",900)))
