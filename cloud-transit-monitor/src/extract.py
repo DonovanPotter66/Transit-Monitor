@@ -177,7 +177,12 @@ async def _table_records(page: Page, source: Source | None = None) -> list[dict[
           // wrapper without changing the observed columns.  If the
           // evidence-backed candidate produced no table, fall back to all
           // visible tables and let normalize() enforce the ID/title contract.
-          const selectedTables = tables.length ? tables : [...document.querySelectorAll('table')].filter(visible);
+          const allTables = [...document.querySelectorAll('table')].filter(visible);
+          // Keep the evidence-selected tables first, but include the other
+          // visible tables as a controlled fallback.  Portals often split
+          // headers and result rows across sibling tables; normalize() still
+          // rejects any non-solicitation records afterward.
+          const selectedTables = [...new Set([...tables, ...allTables])];
           const out = [];
           for (const table of selectedTables) {
             const headerNodes = [...table.querySelectorAll('thead th')];
