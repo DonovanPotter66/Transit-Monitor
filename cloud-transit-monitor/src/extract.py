@@ -159,24 +159,41 @@ async def _table_records(page: Page, source: Source | None = None) -> list[dict[
           const candidates = contract.recordSelector
             ? [...document.querySelectorAll(contract.recordSelector)]
             : [...document.querySelectorAll('table')];
+          const headerFor = table => {
+            const head = [...table.querySelectorAll('thead th')].map(x => clean(x.innerText).toLowerCase());
+            if (head.length) return {headers: head, row: null};
+            const rows = [...table.querySelectorAll('tr')];
+            for (const row of rows.slice(0, 12)) {
+              const hs = [...row.querySelectorAll(':scope > th,:scope > td')].map(x => clean(x.innerText).toLowerCase());
+              if (contract.requiredHeaders.length && contract.requiredHeaders.every(h => hs.includes(h))) return {headers: hs, row};
+            }
+            return {headers: [], row: null};
+          };
           const tables = candidates.filter(visible).filter(table => {
             if (!contract.requiredHeaders.length) return true;
-            let hs = [...table.querySelectorAll('thead th')].map(x => clean(x.innerText).toLowerCase());
-            if (!hs.length) {
-              const first = table.querySelector('tr');
-              if (first) hs = [...first.querySelectorAll('th,td')].map(x => clean(x.innerText).toLowerCase());
-            }
-            return contract.requiredHeaders.every(h => hs.includes(h));
+            return headerFor(table).headers.length > 0;
           });
+          // A portal can render the header row outside <thead> or alter its
+          // wrapper without changing the observed columns.  If the
+          // evidence-backed candidate produced no table, fall back to all
+          // visible tables and let normalize() enforce the ID/title contract.
+          const selectedTables = tables.length ? tables : [...document.querySelectorAll('table')].filter(visible);
           const out = [];
-          for (const table of tables) {
+          for (const table of selectedTables) {
             const headerNodes = [...table.querySelectorAll('thead th')];
             let headers = headerNodes.map(x => clean(x.innerText));
             let rows = [...table.querySelectorAll('tbody tr')];
             if (!headers.length) {
-              const first = table.querySelector('tr');
-              if (first) headers = [...first.querySelectorAll('th,td')].map(x => clean(x.innerText));
-              rows = [...table.querySelectorAll('tr')].slice(1);
+              const allRows = [...table.querySelectorAll('tr')];
+              const match = allRows.findIndex(row => {
+                const hs = [...row.querySelectorAll(':scope > th,:scope > td')].map(x => clean(x.innerText).toLowerCase());
+                return contract.requiredHeaders.length
+                  ? contract.requiredHeaders.every(h => hs.includes(h))
+                  : hs.length > 0;
+              });
+              const headerRow = match >= 0 ? allRows[match] : allRows[0];
+              if (headerRow) headers = [...headerRow.querySelectorAll(':scope > th,:scope > td')].map(x => clean(x.innerText));
+              rows = allRows.slice(match >= 0 ? match + 1 : 1);
             }
             for (const row of rows) {
               const cells = [...row.querySelectorAll(':scope > th, :scope > td')];
@@ -189,9 +206,15 @@ async def _table_records(page: Page, source: Source | None = None) -> list[dict[
             }
           }
           if (out.length) return out;
-          const gridRoot = contract.recordSelector ? document.querySelector(contract.recordSelector) : document;
-          const gridRows = [...gridRoot.querySelectorAll('[role="row"]')].filter(visible);
+          let gridRoot = contract.recordSelector ? document.querySelector(contract.recordSelector) : document;
+          let gridRows = gridRoot ? [...gridRoot.querySelectorAll('[role="row"]')].filter(visible) : [];
+          if (!gridRows.length && contract.recordSelector) {
+            gridRoot = document;
+            gridRows = [...document.querySelectorAll('[role="row"]')].filter(visible);
+          }
           let headers = [];
+          const globalHeaders = [...gridRoot.querySelectorAll('[role="columnheader"]')].map(x => clean(x.innerText)).filter(Boolean);
+          if (globalHeaders.length) headers = globalHeaders;
           for (const row of gridRows) {
             const hs = [...row.querySelectorAll('[role="columnheader"]')].map(x => clean(x.innerText));
             if (hs.length) { headers = hs; break; }

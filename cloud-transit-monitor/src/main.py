@@ -58,6 +58,12 @@ async def execute() -> dict:
             etag = graph.download(input_path)
 
         results = await run_checks(SOURCES)
+        verified_count = sum(len(result.opportunities) for result in results)
+        if verified_count == 0:
+            # Never replace the deliverable with a blank/empty workbook when
+            # extraction failed across the sources.  The run must surface the
+            # source errors instead of treating zero rows as a valid update.
+            raise RuntimeError("No verified opportunities were extracted; refusing empty workbook publication.")
         metrics = update_workbook(input_path, output_path, results, now.date())
         report = digest(results, metrics, now.date())
 
