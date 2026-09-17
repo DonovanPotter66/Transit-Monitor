@@ -401,10 +401,10 @@ def _marta_current_records_from_text(text: str) -> list[dict[str, str]]:
     except ValueError:
         start = 0
     end = next((i for i in range(start, len(lines))
-                if lower_lines[i] in {"bid results", "anticipated procurements", "vendor login"}), len(lines))
+                if lower_lines[i] in {"bid results", "anticipated procurements", "vendor login", "our mission"}), len(lines))
     lines = lines[start:end]
     for i, line in enumerate(lines):
-        ident=re.search(r"\b(?:RFP|RFQ|IFB|RFI|AE)\s*-?\s*[A-Z]?\d{4,}\b", line, re.I)
+        ident=re.search(r"\b(?:(?:RFP|RFQ|IFB|RFI)\s*-?\s*[A-Z]?\d{4,}[A-Z]?|AE\d{4,}[A-Z]?)\b", line, re.I)
         if not ident: continue
         token=clean(ident.group(0).replace(" ", " "))
         deadline=""
@@ -417,7 +417,7 @@ def _marta_current_records_from_text(text: str) -> list[dict[str, str]]:
                 description=follow
             if "proposal/quote submittal to:" in follow.lower():
                 deadline=clean(follow.split(":",1)[1]); break
-            if re.search(r"\b(?:due|deadline|submittal|opening)\b", follow, re.I) and looks_like_date_or_timestamp(follow):
+            if re.search(r"\b(?:due|deadline|opening)\b", follow, re.I) and looks_like_date_or_timestamp(follow):
                 deadline=follow
                 break
         if deadline:

@@ -26,22 +26,34 @@ class AgencyExtractorTests(unittest.TestCase):
     def test_marta_current_parser_uses_live_documents_section(self):
         text = """
         MARTA Home
+        Current Opportunities
         Current Opportunities Documents
-        RFP P50723 Rail Station Rehabilitation Design Services
-        Description: Architectural and engineering services
-        Proposal/Quote Submittal To: 10/15/2026 2:00 PM
-        IFB P50683 Track Materials Procurement
-        Description: Rail components
+        On-Call Planning Support Services Request for Proposal (RFP) - RFP P50816
+        Bid Documents
+        Description:
+        MARTA is seeking Proposals from Firms to provide planning support.
+        Proposal/Quote Submittal From: 8/11/2026 11:35 AM
+        Proposal/Quote Submittal To: 9/22/2026 2:00 PM
+        Surveying Design Services Architecture/Engineering (A/E) - AE50822A
+        Bid Documents
+        Description:
+        Qualified firms to provide professional architectural and engineering consulting services for Surveying Design Services.
+        Proposal/Quote Submittal To: 10/01/2026 2:00 PM
+        Structural Inspection Engineering Services Architecture/Engineering (A/E) - AE50821
+        Bid Documents
+        Description:
+        Request for Statement of Qualifications - Qualified firms to provide on-call services for structural engineering inspections services
         Proposal/Quote Submittal To: 11/01/2026 2:00 PM
-        Bid Results
+        Our Mission
         P00000 Archived result
         """
 
         rows = _marta_current_records_from_text(text)
 
-        self.assertEqual([row["Solicitation Number"] for row in rows], ["RFP P50723", "IFB P50683"])
-        self.assertEqual(rows[0]["Title"], "Rail Station Rehabilitation Design Services")
-        self.assertEqual(rows[1]["Due Date"], "11/01/2026 2:00 PM")
+        self.assertEqual([row["Solicitation Number"] for row in rows], ["RFP P50816", "AE50822A", "AE50821"])
+        self.assertEqual(rows[0]["Title"], "On-Call Planning Support Services Request for Proposal (RFP)")
+        self.assertEqual(rows[0]["Due Date"], "9/22/2026 2:00 PM")
+        self.assertEqual(rows[1]["Due Date"], "10/01/2026 2:00 PM")
 
     def test_septa_link_parser_keeps_bid_records_not_navigation(self):
         links = [
