@@ -1,6 +1,7 @@
 from src.extract import (
     _bart_records_from_text,
     _marta_current_records_from_text,
+    _mta_records_from_text,
     _records_from_bid_links,
 )
 import unittest
@@ -54,6 +55,28 @@ class AgencyExtractorTests(unittest.TestCase):
         self.assertEqual(rows[0]["Title"], "On-Call Planning Support Services Request for Proposal (RFP)")
         self.assertEqual(rows[0]["Due Date"], "9/22/2026 2:00 PM")
         self.assertEqual(rows[1]["Due Date"], "10/01/2026 2:00 PM")
+
+    def test_mta_parser_uses_active_solicitation_label_blocks(self):
+        text = """
+        Active Solicitations
+        S48020 CBTC for 6th Ave Line, 63rd St Line and DeKalb Interlocking (0000541781)
+        * Solicitation number: 0000541781
+        * Title/Description: CBTC for 6th Ave Line, 63rd St Line and DeKalb Interlocking
+        * Funding: 100% MTA
+        * Current opening/due date: 10/16/2026
+        * Document availability date: 5/21/2026
+        E31634 Fan Plant Component Repairs
+        * Contract number: E31634
+        * Title/description: Fan Plant Component Repairs
+        * Current opening/due date: 9/22/2026
+        * Document availability date: 6/05/2026
+        """
+
+        rows = _mta_records_from_text(text)
+
+        self.assertEqual([row["Solicitation Number"] for row in rows], ["0000541781", "E31634"])
+        self.assertEqual(rows[0]["Title"], "CBTC for 6th Ave Line, 63rd St Line and DeKalb Interlocking")
+        self.assertEqual(rows[1]["Current Opening/Due Date"], "9/22/2026")
 
     def test_septa_link_parser_keeps_bid_records_not_navigation(self):
         links = [

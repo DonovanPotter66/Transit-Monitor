@@ -491,17 +491,52 @@ async def _uta_solicitation_records(page: Page, source: Source) -> list[dict[str
 
 async def _mta_text_records(page: Page) -> list[dict[str, str]]:
     """Fallback parser for MTA C&D's label/value accessibility rendering."""
-    text = await page.locator("body").inner_text()
+    return _mta_records_from_text(await page.locator("body").inner_text())
+
+
+def _mta_records_from_text(text: str) -> list[dict[str, str]]:
+    """Parse MTA C&D active solicitation blocks from rendered page text."""
+    lines = [clean(x) for x in text.splitlines() if clean(x)]
     rows=[]
-    # MTA publishes repeated blocks headed by solicitation/contract number.
+    current: dict[str, str] | None = None
+
+    def finish() -> None:
+        nonlocal current
+        if current and current.get("Solicitation Number") and current.get("Title"):
+            current.setdefault("Status", "Active")
+            rows.append(current)
+        current = None
+
+    for line in lines:
+        id_match = re.match(r"(?:\*\s*)?(?:Solicitation|Contract)\s+number:\s*([A-Z0-9-]+)\b", line, re.I)
+        if id_match:
+            finish()
+            current = {"Solicitation Number": clean(id_match.group(1))}
+            continue
+        if current is None:
+            continue
+        if re.match(r"(?:\*\s*)?Title\s*/\s*description:", line, re.I):
+            current["Title"] = clean(line.split(":", 1)[1])
+        elif re.match(r"(?:\*\s*)?Current opening/due date:", line, re.I):
+            current["Current Opening/Due Date"] = clean(line.split(":", 1)[1])
+        elif re.match(r"(?:\*\s*)?Document availability date:", line, re.I):
+            current["Posted Date"] = clean(line.split(":", 1)[1])
+        elif re.match(r"(?:\*\s*)?Current addenda:", line, re.I):
+            current["Status"] = "Active"
+    finish()
+
+    if rows:
+        return rows
+
+    # Older captures can flatten each block into a single long string.
     pattern = re.compile(
-        r"(?:Solicitation|Contract)\s+(?:number|no\.?)[\s:]+([A-Z0-9-]+).*?"
-        r"(?:Title|Description)[\s:]+(.{3,240}?)(?=\s+(?:Current opening|Due|Document availability|Solicitation|Contract)\b|$)"
-        r"(?:.*?(?:Current opening|Due)\s*(?:date)?[\s:]+([^\n]+))?",
+        r"(?:Solicitation|Contract)\s+number:\s*([A-Z0-9-]+).*?"
+        r"Title\s*/\s*description:\s*(.{3,240}?)(?=\s+(?:Funding|Goals|Est \$ Value|Contract Term|Current opening/due date)\b|$)"
+        r"(?:.*?Current opening/due date:\s*([^\n]+?)(?=\s+(?:Document availability date|Current addenda|Solicitation Notice|Plan Holders|[A-Z0-9-]+\s)|$))?",
         re.I | re.S,
     )
-    for match in pattern.finditer(text):
-        ident, title, due = (clean(x) for x in match.groups())
+    for match in pattern.finditer(clean(text)):
+        ident, title, due = (clean(x or "") for x in match.groups())
         if ident and title:
             rows.append({"Solicitation Number":ident,"Title":title,
                          "Current Opening/Due Date":due,"Status":"Active"})
@@ -545,10 +580,10 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
             records = await _septa_bid_records(page, source)
         elif source.agency == "UTA" and "Solicitation" in source.name:
             records = await _uta_solicitation_records(page, source)
+        elif source.agency == "MTA":
+            records = await _mta_text_records(page)
         else:
             records = await (_link_records(page) if source.mode == "links" else _table_records(page, source))
-            if source.agency == "MTA" and not records:
-                records = await _mta_text_records(page)
             if source.agency == "WMATA":
                 records = _wmata_candidate_records(records)
             if source.agency == "MBTA" and not records:
