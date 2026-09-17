@@ -13,6 +13,11 @@ on:
         required: false
         default: false
         type: boolean
+      diagnostic_structure:
+        description: "Capture source DOM structure and extraction evidence only (no workbook processing)"
+        required: false
+        default: false
+        type: boolean
   schedule:
     # GitHub schedules are UTC. These two triggers cover Pacific daylight and
     # standard time; the local-time gate below permits exactly one 06:00 run.
@@ -85,8 +90,21 @@ jobs:
           path: state/excluded-agencies-diagnostic.json
           if-no-files-found: error
 
+      - name: Run source structure diagnostics only
+        if: inputs.diagnostic_structure == true
+        shell: bash
+        run: python orchestrator/diagnose_source_structure.py --output state/source-structure-diagnostic.json
+
+      - name: Upload source structure diagnostic report
+        if: always() && inputs.diagnostic_structure == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-structure-diagnostic-${{ github.run_id }}
+          path: state/source-structure-diagnostic.json
+          if-no-files-found: error
+
       - name: Verify cloud credentials are configured
-        if: inputs.diagnostic_only != true && inputs.diagnostic_excluded != true
+        if: inputs.diagnostic_only != true && inputs.diagnostic_excluded != true && inputs.diagnostic_structure != true
         shell: bash
         run: |
           missing=0
@@ -100,7 +118,7 @@ jobs:
 
       - name: Gate on local 06:00 time
         id: local_time
-        if: inputs.diagnostic_only != true && inputs.diagnostic_excluded != true
+        if: inputs.diagnostic_only != true && inputs.diagnostic_excluded != true && inputs.diagnostic_structure != true
         shell: bash
         run: |
           # Manual dispatch is an explicit test and must run immediately.
