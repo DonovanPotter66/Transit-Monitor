@@ -51,11 +51,15 @@ def parse_date(value: str) -> date | None:
 
 def choose(record: dict[str, str], aliases: Iterable[str]) -> str:
     normalized = {clean(k).lower(): clean(v) for k, v in record.items()}
-    for alias in aliases:
+    # Normalize aliases as well as record headers.  Source configurations may
+    # use the capitalization shown by the portal (for example ``Ref. #``),
+    # while record keys are normalized to lowercase for matching.
+    normalized_aliases = tuple(clean(alias).lower() for alias in aliases)
+    for alias in normalized_aliases:
         if alias in normalized and normalized[alias]:
             return normalized[alias]
     for key, value in normalized.items():
-        if any(alias in key for alias in aliases) and value:
+        if any(alias in key for alias in normalized_aliases) and value:
             return value
     return ""
 
