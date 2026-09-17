@@ -77,7 +77,7 @@ def normalize(source: Source, records: list[dict[str, str]]) -> list[Opportunity
     output: list[Opportunity] = []
     seen: set[tuple[str, str]] = set()
     for index, record in enumerate(records, 1):
-        opportunity_id = choose(record, ID_HEADERS)
+        opportunity_id = choose(record, source.id_headers or ID_HEADERS)
         if looks_like_date_or_timestamp(opportunity_id):
             opportunity_id = ""
         title = choose(record, TITLE_HEADERS)
@@ -102,9 +102,17 @@ def normalize(source: Source, records: list[dict[str, str]]) -> list[Opportunity
                 # Malformed cells sometimes concatenate the title with posted
                 # and due dates and neighboring filter values.
                 title = clean(re.split(r"\b\d{1,2}/\d{1,2}/\d{4}\b", title, maxsplit=1)[0])[:180]
+        if not opportunity_id and source.link_id_pattern:
+            link = clean(str(record.get("_url", "")))
+            match = re.search(source.link_id_pattern, link, re.I)
+            opportunity_id = clean(match.group(0)) if match else ""
+        # Never infer an ID from a title or row position. If the source
+        # contract did not identify an explicit field/link key, this row is
+        # intentionally withheld instead of receiving SRC-* or AUTO-* text.
         if not opportunity_id:
-            match = re.search(r"\b(?:RFP|RFQ|IFB|RFI|ITB|P|Q|AE|OP|RQ)[-\s]?[A-Z0-9()]{4,}\b", title, re.I)
-            opportunity_id = clean(match.group(0)) if match else f"SRC-{index:04d}"
+            continue
+        if source.id_pattern and not re.fullmatch(source.id_pattern, opportunity_id, re.I):
+            continue
         description = choose(record, ("short description", "scope", "description"))
         posted = parse_date(choose(record, POSTED_HEADERS))
         due = parse_date(choose(record, DUE_HEADERS))

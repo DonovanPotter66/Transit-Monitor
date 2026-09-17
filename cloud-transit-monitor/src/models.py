@@ -17,6 +17,12 @@ class Source:
     # Secondary pages may corroborate discovery but must not be promoted as
     # primary procurement records.
     secondary_policy: str = ""
+    # Source-specific extraction contract. Empty values deliberately mean
+    # "do not infer"; the parser must use the shared headers only when the
+    # source has not supplied a narrower contract yet.
+    id_headers: tuple[str, ...] = ()
+    id_pattern: str = ""
+    link_id_pattern: str = ""
 
 
 @dataclass
