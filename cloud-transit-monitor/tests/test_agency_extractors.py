@@ -1,5 +1,6 @@
 from src.extract import (
     _bart_records_from_text,
+    _mbta_records_from_html,
     _marta_current_records_from_text,
     _marta_records_from_links,
     _page_text_from_html_url,
@@ -58,6 +59,26 @@ class AgencyExtractorTests(unittest.TestCase):
         self.assertEqual(rows[0]["Title"], "On-Call Planning Support Services Request for Proposal (RFP)")
         self.assertEqual(rows[0]["Due Date"], "9/22/2026 2:00 PM")
         self.assertEqual(rows[1]["Due Date"], "10/01/2026 2:00 PM")
+
+    def test_mbta_static_table_parser_uses_future_project_rows(self):
+        html = """
+        <table class="tableFormat" cellspacing="1" style="width:710px">
+          <thead><tr>
+            <th>Contract Number</th><th>Project Name</th><th>Project Description</th>
+            <th>Anticipated Advertisement Date</th><th>Duration</th>
+          </tr></thead>
+          <tbody>
+            <tr><td nowrap>Z94PS35-XX</td><td>GEC for Engineering and Capital</td><td>GEC Reprocurements for Engineering and Capital</td><td nowrap>September 2026</td><td nowrap>36 months</td></tr>
+            <tr><td nowrap>X14PS01</td><td>Design Procurement for Blue Line Signals</td><td></td><td nowrap>September 2026</td><td nowrap>TBD</td></tr>
+          </tbody>
+        </table>
+        """
+
+        rows = _mbta_records_from_html(html)
+
+        self.assertEqual([row["Contract Number"] for row in rows], ["Z94PS35-XX", "X14PS01"])
+        self.assertEqual(rows[0]["Project Name"], "GEC for Engineering and Capital")
+        self.assertEqual(rows[1]["Anticipated Advertisement Date"], "September 2026")
 
     def test_marta_current_parser_can_use_opportunity_links(self):
         links = [

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from html import unescape
 import re
 from datetime import date
 from html.parser import HTMLParser
@@ -349,6 +350,51 @@ async def _mbta_text_records(page: Page) -> list[dict[str, str]]:
                      "Anticipated Advertisement Date": parts[3] if len(parts) > 3 else ""})
     return rows
 
+
+def _mbta_records_from_html(html: str) -> list[dict[str, str]]:
+    """Parse MBTA's static future-project table from source HTML."""
+    rows: list[dict[str, str]] = []
+    table_match = re.search(r"<table\b[^>]*class=[\"'][^\"']*tableFormat[^\"']*[\"'][^>]*>(.*?)</table>", html, re.I | re.S)
+    if not table_match:
+        table_match = re.search(r"<table\b[^>]*>(.*?)</table>", html, re.I | re.S)
+    if not table_match:
+        return rows
+    table_html = table_match.group(1)
+    row_html = re.findall(r"<tr\b[^>]*>(.*?)</tr>", table_html, re.I | re.S)
+    if not row_html:
+        return rows
+
+    def cells(markup: str) -> list[str]:
+        values = []
+        for cell in re.findall(r"<t[dh]\b[^>]*>(.*?)</t[dh]>", markup, re.I | re.S):
+            text = re.sub(r"<br\s*/?>", " ", cell, flags=re.I)
+            text = re.sub(r"<[^>]+>", " ", text)
+            values.append(clean(unescape(text)))
+        return values
+
+    headers = cells(row_html[0])
+    for raw in row_html[1:]:
+        values = cells(raw)
+        if not values or len(values) < 2:
+            continue
+        item = {headers[index] if index < len(headers) else f"Column {index + 1}": value for index, value in enumerate(values)}
+        if item.get("Contract Number") and item.get("Project Name"):
+            rows.append(item)
+    return rows
+
+
+async def _mbta_static_html_records(source: Source) -> list[dict[str, str]]:
+    try:
+        request = Request(source.url, headers={"User-Agent": "Mozilla/5.0 transit-monitor/1.0"})
+        response = await asyncio.to_thread(urlopen, request, timeout=45)
+        try:
+            html = await asyncio.to_thread(response.read)
+        finally:
+            response.close()
+    except Exception:
+        return []
+    return _mbta_records_from_html(html.decode("utf-8", "replace"))
+
 async def _marta_text_records(page: Page) -> list[dict[str, str]]:
     """Parse MARTA's accessible anticipated-procurement column stream.
 
@@ -680,6 +726,13 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
             records = await _mta_text_records(page)
             if not records:
                 records = await _html_text_fallback_records(source)
+        elif source.agency == "MBTA":
+            records = await _table_records(page, source)
+            records.extend(await _mbta_frame_records(page))
+            records.extend(await _mbta_text_records(page))
+            opportunities = normalize(source, records)
+            if not opportunities:
+                records.extend(await _mbta_static_html_records(source))
         else:
             if missing:
                 raise RuntimeError(f"Missing success markers: {', '.join(missing)}")
