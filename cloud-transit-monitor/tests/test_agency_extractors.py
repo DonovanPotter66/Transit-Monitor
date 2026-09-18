@@ -7,6 +7,7 @@ from src.extract import (
     _page_text_from_html_url,
     _mta_records_from_text,
     _records_from_bid_links,
+    _sound_transit_snapshot_records_from_text,
 )
 import asyncio
 from unittest.mock import patch
@@ -174,6 +175,36 @@ class AgencyExtractorTests(unittest.TestCase):
 
         self.assertEqual([row["Solicitation Number"] for row in rows], ["RFP 26-101", "RFQ 26-220"])
         self.assertEqual(rows[0]["Title"], "Light Rail Vehicle Engineering Services")
+
+    def test_sound_transit_snapshot_parser_uses_pdf_procurement_rows(self):
+        text = """
+        Procurement Snapshot
+        Procurement Title Procurement ID Procurement Process Phase Solicitation
+        Pre-Bid Meeting Submittal Due NOIA or NOA
+        Light Rail Vehicle Series 3 RP 0110-24 Request for Proposal Advertising 06/26/26 03/12/27 09/28/27
+        On-Call Transit Fare Collection and Payment Industry Consulting
+        Services
+        RP 0157-26 Request for Proposal Advertising 09/10/26 10/21/26 01/25/27
+        W100- WSLE SODO Station - GC/CM GC 0124-26 Advertising 08/10/26 09/21/26 07/01/27
+        DRLE Large Wood Material Installation CN 0003-26 Invitation for Bid (IFB) In Development TBD
+        WSLE Geo & Instrumentation Monitoring AE 0096-26 Request for
+        Qualifications
+        Evaluating 06/12/26 06/23/26 07/09/26 10/22/26
+        """
+
+        rows = _sound_transit_snapshot_records_from_text(text)
+
+        self.assertEqual(
+            [row["Procurement ID"] for row in rows],
+            ["RP 0110-24", "RP 0157-26", "GC 0124-26", "CN 0003-26", "AE 0096-26"],
+        )
+        self.assertEqual(rows[0]["Project Name"], "Light Rail Vehicle Series 3")
+        self.assertEqual(
+            rows[1]["Project Name"],
+            "On-Call Transit Fare Collection and Payment Industry Consulting Services",
+        )
+        self.assertEqual(rows[2]["Due Date"], "09/21/26")
+        self.assertEqual(rows[3]["Status"], "In Development")
 
 
 if __name__ == "__main__":

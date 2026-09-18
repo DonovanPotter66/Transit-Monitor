@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from html import unescape
+import io
 import re
 from datetime import date
 from html.parser import HTMLParser
@@ -638,6 +639,99 @@ async def _uta_solicitation_records(page: Page, source: Source) -> list[dict[str
     return _records_from_bid_links(links, source.link_id_pattern, "UTA")
 
 
+SOUND_TRANSIT_ID_PATTERN = re.compile(r"\b(?:RP|IB|GC|CN|DB|AE)\s+\d{4}-\d{2}\b", re.I)
+SOUND_TRANSIT_PROCESS_PATTERN = re.compile(
+    r"\b(?:Request for Proposal|Invitation for Bid \(IFB\)|Request for Qualifications|Competitive Bid|GC/CM)\b",
+    re.I,
+)
+SOUND_TRANSIT_PHASE_PATTERN = re.compile(r"\b(?:Evaluating|Advertising|In Development)\b", re.I)
+SOUND_TRANSIT_DATE_PATTERN = re.compile(r"\b(?:\d{2}/\d{2}/\d{2}|TBD)\b", re.I)
+SOUND_TRANSIT_PREVIOUS_ROW_END_PATTERN = re.compile(
+    r"\b(?:Evaluating|Advertising|In Development)\b(?:\s+(?:\d{2}/\d{2}/\d{2}|TBD)){1,4}\s+",
+    re.I,
+)
+
+
+def _sound_transit_pdf_text(data: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("pypdf is required to parse Sound Transit procurement snapshots") from exc
+
+    reader = PdfReader(io.BytesIO(data))
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+def _trim_sound_transit_title(prefix: str) -> str:
+    title = SOUND_TRANSIT_PREVIOUS_ROW_END_PATTERN.split(clean(prefix))[-1]
+    title = re.sub(r"^[^A-Za-z0-9]+", "", title)
+    noise = (
+        "Procurement Snapshot",
+        "Snapshot of Active and Future Procurement Activity (Future dates are estimated)",
+        "Materials, Technology and Services",
+        "DESIGN & CONSTRUCTION",
+        "Construction",
+        "Architecture and Engineering",
+        "Procurement Title Procurement ID Procurement Process Phase Solicitation",
+        "Pre-Bid Meeting Submittal Due NOIA or NOA",
+    )
+    changed = True
+    while changed:
+        changed = False
+        for phrase in noise:
+            if title.lower().startswith(phrase.lower()):
+                title = clean(title[len(phrase):])
+                title = re.sub(r"^[^A-Za-z0-9]+", "", title)
+                changed = True
+    return clean(title.strip(" :-"))
+
+
+def _sound_transit_snapshot_records_from_text(text: str) -> list[dict[str, str]]:
+    stream = clean(text)
+    id_matches = list(SOUND_TRANSIT_ID_PATTERN.finditer(stream))
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for index, match in enumerate(id_matches):
+        procurement_id = clean(match.group(0).upper())
+        if procurement_id in seen:
+            continue
+        title = _trim_sound_transit_title(stream[:match.start()])
+        segment_end = id_matches[index + 1].start() if index + 1 < len(id_matches) else len(stream)
+        segment = clean(stream[match.end():segment_end])
+        process_match = SOUND_TRANSIT_PROCESS_PATTERN.search(segment)
+        phase_match = SOUND_TRANSIT_PHASE_PATTERN.search(segment)
+        if not title or not phase_match:
+            continue
+        dates = [clean(date_match.group(0)) for date_match in SOUND_TRANSIT_DATE_PATTERN.finditer(segment)]
+        due_date = ""
+        if dates:
+            # Snapshot columns are Solicitation, Pre-Bid Meeting, Submittal Due,
+            # and NOIA/NOA.  Use Submittal Due when present; otherwise the last
+            # available source milestone is the best workbook date.
+            due_date = dates[-2] if len(dates) >= 3 else dates[-1]
+        rows.append({
+            "Procurement ID": procurement_id,
+            "Project Name": title,
+            "Description": clean(process_match.group(0)) if process_match else "",
+            "Advertisement Date": dates[0] if dates and dates[0].upper() != "TBD" else "",
+            "Due Date": due_date if due_date.upper() != "TBD" else "",
+            "Status": clean(phase_match.group(0)),
+        })
+        seen.add(procurement_id)
+    return rows
+
+
+async def _sound_transit_snapshot_records(source: Source) -> list[dict[str, str]]:
+    def fetch_pdf() -> bytes:
+        request = Request(source.url, headers={"User-Agent": "Mozilla/5.0 transit-monitor/1.0"})
+        with urlopen(request, timeout=60) as response:
+            return response.read()
+
+    data = await asyncio.to_thread(fetch_pdf)
+    text = await asyncio.to_thread(_sound_transit_pdf_text, data)
+    return _sound_transit_snapshot_records_from_text(text)
+
+
 async def _mta_text_records(page: Page) -> list[dict[str, str]]:
     """Fallback parser for MTA C&D's label/value accessibility rendering."""
     return _mta_records_from_text(await page.locator("body").inner_text())
@@ -711,6 +805,12 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
     context = await browser.new_context()
     page = await context.new_page()
     try:
+        if source.agency == "Sound Transit" and "Procurement Snapshot" in source.name:
+            records = await _sound_transit_snapshot_records(source)
+            opportunities = normalize(source, records)
+            if not opportunities:
+                raise RuntimeError("Expected populated opportunity rows were not found.")
+            return opportunities
         await page.goto(source.url, wait_until="domcontentloaded", timeout=90_000)
         await page.wait_for_timeout(4_000)
         if source.url_pattern and not re.search(source.url_pattern, page.url, re.I):
