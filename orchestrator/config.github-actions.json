@@ -7,9 +7,9 @@
   "batch_size":10,
   "lease_seconds":120,
   "retry_delay_seconds":0,
-  "deferred_sources":[{"agency":"WMATA","reason":"Supplier portal blocked"},{"agency":"LA Metro","reason":"Vendor portal WAF blocked"}],
+  "deferred_sources":[{"agency":"WMATA","reason":"Supplier portal blocked"},{"agency":"LA Metro","reason":"Vendor portal WAF blocked"},{"agency":"MTA","reason":"C&D current opportunities page returns 403/access-limited content from automation runners"}],
   "preflight":{"enabled":true,"proxy_policy":"absent_or_valid","workbook":{"path":"state/input/Transit Agency Monitor.xlsx","minimum_tables":1,"required_sheets":["Dashboard","Summary","High Priority Pursuit List","Opportunity Register","Source Health","Pursuit Management"]}},
   "executables":{"orchestrator":{"path":"python3","required":true,"enabled":true}},
-  "sources":[{"source_id":"ten-agencies-live","adapter":"python_json","python":"python3","entrypoint":"live_aggregate_adapter.py","args":["--agency","BART","--agency","MARTA","--agency","MTA","--agency","CTA","--agency","DART","--agency","RTD Denver","--agency","SEPTA","--agency","UTA","--agency","Sound Transit"],"acquisition_root":"../state/github-acquisitions","timeout_seconds":1800,"reject_partial":false,"pipeline":"workbook","enabled":true}],
+  "sources":[{"source_id":"ten-agencies-live","adapter":"python_json","python":"python3","entrypoint":"live_aggregate_adapter.py","args":["--agency","BART","--agency","MARTA","--agency","CTA","--agency","DART","--agency","RTD Denver","--agency","SEPTA","--agency","UTA","--agency","Sound Transit"],"acquisition_root":"../state/github-acquisitions","timeout_seconds":1800,"reject_partial":false,"pipeline":"workbook","enabled":true}],
   "pipelines":{"workbook":{"adapter":"workbook_python","python":"python3","script":"workbook_publish_portable.py","canonical_workbook":"../state/input/Transit Agency Monitor.xlsx","required_imports":["openpyxl"],"timeout_seconds":1800,"output_name":"result.json","enabled":true}}
 }

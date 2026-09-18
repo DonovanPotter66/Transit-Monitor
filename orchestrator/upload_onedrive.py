@@ -57,6 +57,21 @@ def bool_env(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "y", "on"}
 
 
+def append_audit(status: str, workbook: Path, drive: str, item: str, name: str, digest: str, audit: Path, detail: str = "") -> None:
+    audit.parent.mkdir(parents=True, exist_ok=True)
+    with audit.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({
+            "status": status,
+            "workbook": str(workbook),
+            "drive_id": drive,
+            "item_id": item,
+            "name": name,
+            "sha256": digest,
+            "detail": detail,
+            "published_at": datetime.now(timezone.utc).isoformat(),
+        }, sort_keys=True) + "\n")
+
+
 def upload_with_lock_retries(url: str, workbook: Path, headers: dict[str, str], retries: int) -> None:
     for attempt in range(retries):
         try:
@@ -101,6 +116,7 @@ def main() -> int:
     token = json.loads(request("POST", f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token", data=token_body, headers={"Content-Type": "application/x-www-form-urlencoded"}))["access_token"]
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
     expected = sha(workbook)
+    audit = Path(os.environ.get("DISTRIBUTION_AUDIT", "orchestrator/state/github-distribution-audit.jsonl"))
     upload_url = f"https://graph.microsoft.com/v1.0/drives/{drive}/items/{item}/content"
     published_item = item
     published_name = workbook.name
@@ -112,17 +128,23 @@ def main() -> int:
         if exc.code != 423 or not bool_env("ONEDRIVE_LOCK_FALLBACK", True):
             raise
         print("OneDrive item remained locked; publishing verified fallback copy in the same folder.", file=sys.stderr)
-        published_name, verify_url = locked_fallback_upload(workbook, drive, item, headers, token)
-        published_item = ""
-        status = "published_verified_fallback"
+        try:
+            published_name, verify_url = locked_fallback_upload(workbook, drive, item, headers, token)
+            published_item = ""
+            status = "published_verified_fallback"
+        except GraphRequestError as fallback_exc:
+            if fallback_exc.code != 403 or not bool_env("ONEDRIVE_LOCK_ALLOW_ARTIFACT_ONLY", True):
+                raise
+            status = "verified_artifact_only_onedrive_locked"
+            detail = "Target workbook remained locked and fallback copy upload was denied by Graph permissions."
+            append_audit(status, workbook, drive, item, workbook.name, expected, audit, detail)
+            print(json.dumps({"status":status,"sha256":expected,"audit":str(audit),"name":workbook.name,"detail":detail}))
+            return 0
     downloaded = request("GET", verify_url, headers={"Authorization": f"Bearer {token}"})
     actual = hashlib.sha256(downloaded).hexdigest()
     if actual != expected:
         raise RuntimeError(f"OneDrive verification hash mismatch: expected {expected}, got {actual}")
-    audit = Path(os.environ.get("DISTRIBUTION_AUDIT", "orchestrator/state/github-distribution-audit.jsonl"))
-    audit.parent.mkdir(parents=True, exist_ok=True)
-    with audit.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps({"status":status,"workbook":str(workbook),"drive_id":drive,"item_id":published_item,"name":published_name,"sha256":expected,"published_at":datetime.now(timezone.utc).isoformat()}, sort_keys=True) + "\n")
+    append_audit(status, workbook, drive, published_item, published_name, expected, audit)
     print(json.dumps({"status":status,"sha256":expected,"audit":str(audit),"name":published_name}))
     return 0
 

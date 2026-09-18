@@ -98,6 +98,51 @@ def valid_opportunity_row(row):
         # solicitation identifiers, even if an old payload contains them.
         return bool(re.fullmatch(r"BARTD[-\s][A-Z0-9]+(?:[-][A-Z0-9]+)*", oid, re.I))
     return True
+
+def prior_register_opportunities(rows, run_date):
+    if not rows:
+        return []
+    headers = {str(v).strip(): i for i, v in enumerate(rows[0]) if v is not None}
+    required = ("Agency", "Opportunity ID", "Project Name")
+    if any(name not in headers for name in required):
+        return []
+    out = []
+    for row in rows[1:]:
+        def get(name, default=""):
+            idx = headers.get(name)
+            return row[idx] if idx is not None and idx < len(row) and row[idx] is not None else default
+        item = {
+            "agency": str(get("Agency")).strip(),
+            "opportunity_id": str(get("Opportunity ID")).strip(),
+            "project_name": str(get("Project Name")).strip(),
+            "description": str(get("Description")),
+            "posted_date": get("Posted Date") or None,
+            "due_date": get("Due Date") or None,
+            "status": str(get("Status", "Previously observed")),
+            "priority": str(get("Priority", "Low")),
+            "pgh_wong_relevance": str(get("PGH Wong Relevance") or get("Relevance")),
+            "change_status": "Preserved from prior workbook; source check failed this run",
+            "first_seen_date": get("First Seen Date") or run_date,
+            "last_seen_date": get("Last Seen Date") or run_date,
+            "source_url": str(get("Source URL")),
+            "opportunity_url": str(get("Opportunity URL") or get("Source URL")),
+            "notes": "Carried forward because the agency source was inaccessible during this run.",
+            "next_step": "Review preserved opportunity after source access recovers",
+        }
+        if valid_opportunity_row(item):
+            out.append(item)
+    return out
+
+def merge_failed_agency_baselines(current, prior, failed_agencies):
+    """Keep an agency visible when the live source fails but prior rows exist."""
+    by_key = {(str(o.get("agency")), str(o.get("opportunity_id"))): o for o in current}
+    current_agencies = {str(o.get("agency")) for o in current}
+    for item in prior:
+        agency = str(item.get("agency"))
+        if agency not in failed_agencies or agency in current_agencies:
+            continue
+        by_key.setdefault((agency, str(item.get("opportunity_id"))), item)
+    return sorted(by_key.values(), key=lambda x: (str(x.get("agency")), str(x.get("opportunity_id"))))
 def set_matrix(ws, start_cell, rows):
     from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
     col, row = coordinate_from_string(start_cell); c0 = column_index_from_string(col)
@@ -130,13 +175,18 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         for row in reg_rows[1:]:
             if headers.get("Opportunity ID") is not None and headers.get("First Seen Date") is not None and row[headers["Opportunity ID"]]:
                 prior[str(row[headers["Opportunity ID"]])] = row[headers["First Seen Date"]]
-    opps = [o for o in payload.get("opportunities", []) if valid_opportunity_row(o)]
     changes = payload.get("changes", []); sources = payload.get("sources", [])
     run = payload.get("run", {}); run_date = typed_date(run.get("run_date"))
-    agencies = sorted({x.get("agency") for x in sources + opps if x.get("agency")})
-    high = [o for o in opps if o.get("priority") == "High"]
     failures = [s for s in sources if str(s.get("check_result", "")).lower() != "success"]
     failed_agencies = {s.get("agency") for s in failures}
+    prior_opps = prior_register_opportunities(reg_rows, run_date)
+    opps = merge_failed_agency_baselines(
+        [o for o in payload.get("opportunities", []) if valid_opportunity_row(o)],
+        prior_opps,
+        failed_agencies,
+    )
+    agencies = sorted({x.get("agency") for x in sources + opps if x.get("agency")})
+    high = [o for o in opps if o.get("priority") == "High"]
     changes_agencies = {x.get("agency") for x in changes}
     # Keep the Summary table as a current-run record. The old implementation
     # left projected/template rows in place, which made the sheet look stale.
@@ -173,7 +223,7 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         key = agency.replace(" ", "_"); ws = wb[key] if key in wb.sheetnames else (wb[agency] if agency in wb.sheetnames else None)
         if not ws: continue
         current = next((t for t in ws.tables.values() if t.name in (f"Current_{key}", f"Current_{agency}")), None)
-        if current and agency not in failed_agencies:
+        if current:
             # Make the agency page readable: highest-priority solicitations
             # first, with stable tie-breakers so repeated runs do not shuffle.
             ao = sorted(
@@ -253,7 +303,7 @@ def main(canonical: Path, payload_path: Path, output: Path, manifest_path: Path)
         for table in list(ws.tables.values()):
             if table.name.startswith("Current_"):
                 suffix = table.name[len("Current_"):]
-                active_keys = {str(a).replace(" ", "_") for a in agencies if a not in failed_agencies}
+                active_keys = {str(a).replace(" ", "_") for a in agencies if any(o.get("agency") == a for o in opps)}
                 if suffix not in active_keys:
                     write_rows(ws, table, [])
     # Make human-facing columns readable.

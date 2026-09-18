@@ -68,7 +68,6 @@ SOURCES = (
            markers=("Welcome, WMATA Supplier Guest", "Solicitation ID", "Solicitation Name")),
     Source("MTA", "MTA C&D Current Opportunities",
            "https://www.mta.info/agency/construction-and-development/contracting/current-opportunities",
-           markers=("Active Solicitations",),
            id_pattern=r"[A-Z0-9]+(?:-[A-Z0-9]+)*"),
     Source("MARTA", "MARTA Current Opportunities",
            "https://martabid.marta.net/CurrentOpportunities.aspx",
