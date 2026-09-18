@@ -91,7 +91,7 @@ def valid_opportunity_row(row):
         return False
     if oid.casefold() in {"program", "philadelphia", "status", "contract type", "event name", "solicitation id", "end date", "start date", "description", "project", "title"}:
         return False
-    if re.search(r"\s", oid) and not re.fullmatch(r"(?:RFP|RFQ|IFB|RFI|P|AE)\s*[-#]?\s*[A-Z0-9-]*\d[A-Z0-9-]*", oid, re.I):
+    if re.search(r"\s", oid) and not re.fullmatch(r"(?:RFP|RFQ|IFB|RFI|P|AE|RP|GC|CN|DB|IB)\s*[-#]?\s*[A-Z0-9-]*\d[A-Z0-9-]*", oid, re.I):
         return False
     if agency == "BART":
         # Never republish PeopleSoft search labels or generated AUTO IDs as

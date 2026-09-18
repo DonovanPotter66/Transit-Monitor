@@ -26,6 +26,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 jobs:
   monitor:
@@ -195,3 +197,25 @@ jobs:
           workbook=$(find state/github-actions-committed -type f -name 'Transit Agency Monitor.xlsx' | sort | tail -n 1)
           test -n "$workbook" || { echo "No committed workbook found" >&2; exit 1; }
           python orchestrator/upload_onedrive.py "$workbook"
+
+      - name: Build website from current monitor payload
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && inputs.diagnostic_excluded != true && success()
+        shell: bash
+        run: |
+          payload=$(find state/github-actions-staging -type f -path '*/workbook_payload/*.normalized.json' | sort | tail -n 1)
+          test -n "$payload" || { echo "No normalized payload found" >&2; exit 1; }
+          python orchestrator/site_publish.py "$payload" "state/site"
+
+      - name: Configure GitHub Pages
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && inputs.diagnostic_excluded != true && success()
+        uses: actions/configure-pages@v5
+
+      - name: Upload website artifact
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && inputs.diagnostic_excluded != true && success()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: state/site
+
+      - name: Deploy website to GitHub Pages
+        if: steps.local_time.outputs.run == 'true' && inputs.diagnostic_only != true && inputs.diagnostic_excluded != true && success()
+        uses: actions/deploy-pages@v4

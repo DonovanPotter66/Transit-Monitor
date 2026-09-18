@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 jobs:
   acquire:
@@ -97,6 +99,16 @@ jobs:
             "state/output/manifest.json"
           python orchestrator/validate_xlsx_package.py "state/output/Transit Agency Monitor.xlsx"
           python orchestrator/upload_onedrive.py "state/output/Transit Agency Monitor.xlsx"
+      - name: Build website from current monitor payload
+        run: python orchestrator/site_publish.py "state/acquisition.json" "state/site"
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Upload website artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: state/site
+      - name: Deploy website to GitHub Pages
+        uses: actions/deploy-pages@v4
       - name: Upload publication evidence
         if: always()
         uses: actions/upload-artifact@v4
