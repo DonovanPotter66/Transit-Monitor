@@ -1,5 +1,6 @@
 from src.extract import (
     _bart_records_from_text,
+    _mbta_page_html_records,
     _mbta_records_from_html,
     _marta_current_records_from_text,
     _marta_records_from_links,
@@ -7,6 +8,7 @@ from src.extract import (
     _mta_records_from_text,
     _records_from_bid_links,
 )
+import asyncio
 from unittest.mock import patch
 import unittest
 
@@ -79,6 +81,19 @@ class AgencyExtractorTests(unittest.TestCase):
         self.assertEqual([row["Contract Number"] for row in rows], ["Z94PS35-XX", "X14PS01"])
         self.assertEqual(rows[0]["Project Name"], "GEC for Engineering and Capital")
         self.assertEqual(rows[1]["Anticipated Advertisement Date"], "September 2026")
+
+    def test_mbta_page_html_parser_uses_loaded_browser_content(self):
+        class FakePage:
+            async def content(self):
+                return """
+                <table class="tableFormat"><tr><th>Contract Number</th><th>Project Name</th><th>Project Description</th><th>Anticipated Advertisement Date</th><th>Duration</th></tr>
+                <tr><td>X14PS01</td><td>Design Procurement for Blue Line Signals</td><td></td><td>September 2026</td><td>TBD</td></tr></table>
+                """
+
+        rows = asyncio.run(_mbta_page_html_records(FakePage()))
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["Contract Number"], "X14PS01")
 
     def test_marta_current_parser_can_use_opportunity_links(self):
         links = [

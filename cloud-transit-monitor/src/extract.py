@@ -395,6 +395,13 @@ async def _mbta_static_html_records(source: Source) -> list[dict[str, str]]:
         return []
     return _mbta_records_from_html(html.decode("utf-8", "replace"))
 
+
+async def _mbta_page_html_records(page: Page) -> list[dict[str, str]]:
+    try:
+        return _mbta_records_from_html(await page.content())
+    except Exception:
+        return []
+
 async def _marta_text_records(page: Page) -> list[dict[str, str]]:
     """Parse MARTA's accessible anticipated-procurement column stream.
 
@@ -730,6 +737,9 @@ async def _check_once(browser: Browser, source: Source) -> list[Opportunity]:
             records = await _table_records(page, source)
             records.extend(await _mbta_frame_records(page))
             records.extend(await _mbta_text_records(page))
+            opportunities = normalize(source, records)
+            if not opportunities:
+                records.extend(await _mbta_page_html_records(page))
             opportunities = normalize(source, records)
             if not opportunities:
                 records.extend(await _mbta_static_html_records(source))
