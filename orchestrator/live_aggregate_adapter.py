@@ -42,7 +42,7 @@ def valid_source_row(item) -> bool:
         return False
     # Prefixes such as RFP/IFB/RFQ are valid only when followed by a coded
     # identifier containing digits; free-form labels like “RFP Green” fail.
-    if re.search(r"\s", oid) and not re.fullmatch(r"(?:RFP|RFQ|IFB|RFI|P|AE)\s*[-#]?\s*[A-Z0-9-]*\d[A-Z0-9-]*", oid, re.I):
+    if re.search(r"\s", oid) and not re.fullmatch(r"(?:RFP|RFQ|IFB|RFI|P|AE|RP|GC|CN|DB|IB)\s*[-#]?\s*[A-Z0-9-]*\d[A-Z0-9-]*", oid, re.I):
         return False
     if item.agency == "BART":
         # BART's PeopleSoft page renders search controls as pseudo-rows.  A

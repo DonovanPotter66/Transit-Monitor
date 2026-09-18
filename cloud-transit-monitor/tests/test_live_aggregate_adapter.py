@@ -7,9 +7,9 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "orchestrator"))
 
-from live_aggregate_adapter import ensure_mbta_rows  # noqa: E402
+from live_aggregate_adapter import ensure_mbta_rows, valid_source_row  # noqa: E402
 from src.config import SOURCES  # noqa: E402
-from src.models import CheckResult  # noqa: E402
+from src.models import CheckResult, Opportunity  # noqa: E402
 
 
 class LiveAggregateAdapterTests(unittest.TestCase):
@@ -23,6 +23,16 @@ class LiveAggregateAdapterTests(unittest.TestCase):
         self.assertEqual(recovered.status, "Successful via MBTA verified baseline fallback")
         self.assertEqual([item.opportunity_id for item in recovered.opportunities], ["Z94PS35-XX", "X14PS01"])
         self.assertTrue(all(item.notes for item in recovered.opportunities))
+
+    def test_sound_transit_procurement_ids_pass_publish_validation(self):
+        for oid in ("RP 0110-24", "GC 0124-26", "CN 0003-26", "DB 0226-25", "IB 0112-26", "AE 0096-26"):
+            self.assertTrue(valid_source_row(Opportunity(
+                agency="Sound Transit",
+                source_name="Sound Transit Procurement Snapshot",
+                source_url="https://www.soundtransit.org/sites/default/files/documents/snapshot-current.pdf",
+                opportunity_id=oid,
+                project_name="Light Rail Vehicle Series 3",
+            )), oid)
 
 
 if __name__ == "__main__":
