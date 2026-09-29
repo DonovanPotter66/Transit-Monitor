@@ -74,6 +74,10 @@ jobs:
           python -m pip install -r cloud-transit-monitor/requirements.txt
           python -m playwright install --with-deps chromium
 
+      - name: Check extraction and status regression tests
+        working-directory: cloud-transit-monitor
+        run: PYTHONPATH=. python -m unittest discover -s tests -q
+
       - name: Run MBTA diagnostic only
         if: inputs.diagnostic_only == true
         shell: bash

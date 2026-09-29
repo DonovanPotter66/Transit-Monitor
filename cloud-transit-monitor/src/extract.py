@@ -133,14 +133,16 @@ def normalize(source: Source, records: list[dict[str, str]]) -> list[Opportunity
         description = choose(record, ("short description", "scope", "description"))
         posted = parse_date(choose(record, POSTED_HEADERS))
         due = parse_date(choose(record, DUE_HEADERS))
-        status = choose(record, STATUS_HEADERS) or ("Future opportunity" if "anticipated" in source.name.lower() else "Active")
+        # Exact headers only: "Status/Due Date" is not a status field.
+        status = next((clean(v) for k, v in record.items()
+                       if clean(k).lower() in STATUS_HEADERS and clean(v)), "")
         if source.agency in REINTEGRATION_AGENCIES:
             # Never synthesize an ID or silently accept a UI/header row for a
-            # deferred source.  Publication requires an ID, title, status,
-            # and at least one source-provided date.
+            # deferred source. Publication requires an ID, title, and at
+            # least one source-provided date. Missing status stays unknown.
             raw_id = clean(opportunity_id)
             if (not raw_id or raw_id.startswith("SRC-") or
-                    not title or not status or not (posted or due)):
+                    not title or not (posted or due)):
                 continue
         priority, relevance = classify(" ".join((title, description)))
         opportunity = Opportunity(
@@ -152,11 +154,12 @@ def normalize(source: Source, records: list[dict[str, str]]) -> list[Opportunity
             description=description,
             posted_date=posted,
             due_date=due,
-            status=status,
+            status=status or "Unknown / Not provided",
             priority=priority,
             relevance=relevance,
             opportunity_url=record.get("_url", source.url),
             raw=record,
+            notes=("Source program: " + clean(record["Program Name"])) if record.get("Program Name") else "",
         )
         if opportunity.key not in seen:
             output.append(opportunity)
@@ -279,7 +282,7 @@ def _bart_records_from_text(text: str) -> list[dict[str, str]]:
     id_matches = list(re.finditer(r"\bBARTD[- ]?[A-Z0-9]+(?:-[A-Z0-9]+)*\b", stream, re.I))
     rows: list[dict[str, str]] = []
     datetime_pattern = re.compile(r"\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}\s*[AP]M\s*(?:P[DS]T)?", re.I)
-    status_pattern = re.compile(r"\b(accepted|active|open|na|sb|dbe|mwbe(?:,sb)?|micr)\b", re.I)
+    status_pattern = re.compile(r"\b(accepted|active|open|awarded|cancelled|pending award|not awarded|posted)\b", re.I)
     for index, match in enumerate(id_matches):
         end = id_matches[index + 1].start() if index + 1 < len(id_matches) else len(stream)
         segment = clean(stream[match.end():end])
@@ -297,20 +300,36 @@ def _bart_records_from_text(text: str) -> list[dict[str, str]]:
             "Event Name": title,
             "Start Date": clean(dates[0].group(0)),
             "End Date": clean(dates[1].group(0)),
-            "Status": clean(status_match.group(1)).title() if status_match else "Active",
+            "Status": clean(status_match.group(1)).title() if status_match else "",
             "Electronic Bid": electronic,
         })
     return rows
 
 
 async def _bart_text_records(page: Page) -> list[dict[str, str]]:
-    """Extract BART's concatenated PeopleSoft result stream.
+    """Read the result grid by column, retaining empty status cells."""
+    grid = await page.locator('[id="l0RESP_INQA_HD_VW_GR$0"]').evaluate("""el => ({
+        headers: Array.from(el.querySelectorAll('[id^="thRESP_INQA_HD_VW_GR"]'))
+            .map(cell => cell.innerText.trim()),
+        rows: Array.from(el.querySelectorAll('tr[id^="trRESP_INQA_HD_VW_GR"]'))
+            .map(row => Array.from(row.cells).map(cell => cell.innerText.trim()))
+    })""")
+    return _bart_records_from_grid(grid["headers"], grid["rows"])
 
-    The captured page has the result headings and all result cells in one
-    rendered text stream; the surrounding 34 tables are layout/control
-    tables.  BART solicitation IDs are the stable row boundary.
-    """
-    return _bart_records_from_text(await page.locator("body").inner_text())
+
+def _bart_records_from_grid(headers: list[str], rows: list[list[str]]) -> list[dict[str, str]]:
+    expected = ["Solicitation Id", "Event Name", "Start Date", "End Date",
+                "Status/Due Date", "Status", "Program Name", "Contract Type", "Electronic Bid"]
+    if [clean(h) for h in headers] != expected:
+        raise ValueError("BART result columns changed; refusing to guess status mapping")
+    result = []
+    for cells in rows:
+        if len(cells) < len(expected):
+            raise ValueError("BART result row is missing columns")
+        record = dict(zip(expected, map(clean, cells)))
+        if record["Solicitation Id"].startswith("BARTD-"):
+            result.append(record)
+    return result
 
 async def _mbta_frame_records(page: Page) -> list[dict[str, str]]:
     """MBTA currently renders the future-project table in a child frame."""

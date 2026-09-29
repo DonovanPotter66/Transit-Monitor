@@ -51,6 +51,16 @@ def date_key(value: str) -> str:
 
 
 def clean_opportunity(item: dict) -> dict:
+    raw_status = str(item.get("status") or "").strip()
+    # Older payloads may contain BART program codes in the status field.
+    program_codes = {"na", "n/a", "sb", "sbe", "msbe", "sbe/msbe", "dbe", "micr", "mwbe", "mwbe,sb", "mbe", "wbe", "non-dbe"}
+    status = raw_status
+    if not status or status.lower().replace(" ", "") in program_codes:
+        status = "Unknown / Not provided"
+    elif status.lower() in {"evaluation", "evaluating"}:
+        status = "Evaluating"
+    elif status.lower() == "open":
+        status = "Open"
     return {
         "agency": str(item.get("agency") or ""),
         "source_name": str(item.get("source_name") or ""),
@@ -60,7 +70,7 @@ def clean_opportunity(item: dict) -> dict:
         "description": str(item.get("description") or ""),
         "posted_date": str(item.get("posted_date") or ""),
         "due_date": str(item.get("due_date") or ""),
-        "status": str(item.get("status") or ""),
+        "status": status,
         "priority": str(item.get("priority") or "Low"),
         "pgh_wong_relevance": str(item.get("pgh_wong_relevance") or item.get("why_it_matters") or ""),
         "change_status": str(item.get("change_status") or ""),

@@ -41,7 +41,7 @@ class Opportunity:
     description: str = ""
     posted_date: date | None = None
     due_date: date | None = None
-    status: str = "Active"
+    status: str = "Unknown / Not provided"
     change_status: str = "No material change"
     priority: str = "Low"
     relevance: str = ""
