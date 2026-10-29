@@ -57,6 +57,8 @@ def clean_opportunity(item: dict) -> dict:
     status = raw_status
     if not status or status.lower().replace(" ", "") in program_codes:
         status = "Unknown / Not provided"
+    elif status.lower() in {"unknown", "unknown / not provided", "not provided", "n/a"}:
+        status = "Unknown / Not provided"
     elif status.lower() in {"evaluation", "evaluating"}:
         status = "Evaluating"
     elif status.lower() == "open":
@@ -193,13 +195,18 @@ def html(data: dict) -> str:
         Status
         <select id="statusFilter"><option value="">All statuses</option></select>
       </label>
+      <label>
+        Year (due, or posted if no due date)
+        <select id="yearFilter"><option value="">All years</option></select>
+      </label>
     </section>
 
     <section class="panel">
       <div class="panel-heading">
-        <h2>Current Opportunities</h2>
+        <h2>Procurement Opportunities</h2>
         <p><span id="visibleCount">0</span> shown</p>
       </div>
+      <p class="filter-note">Upcoming deadlines appear first, followed by recent past deadlines. “Deadline passed” is based on the due date; the agency has not confirmed a lifecycle status. Year uses the due date, or the posted date when no due date is available.</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -321,7 +328,7 @@ main {
 .metric strong { font-size: 30px; }
 .controls {
   display: grid;
-  grid-template-columns: minmax(220px, 1.6fr) repeat(3, minmax(150px, 1fr));
+  grid-template-columns: minmax(220px, 1.6fr) repeat(4, minmax(150px, 1fr));
   gap: 12px;
   align-items: end;
 }
@@ -360,6 +367,7 @@ input, select {
   color: var(--muted);
   font-size: 14px;
 }
+.filter-note { margin: 0; padding: 10px 16px; color: var(--muted); font-size: 13px; }
 .table-wrap { overflow-x: auto; }
 table {
   width: 100%;
@@ -417,7 +425,7 @@ a { color: var(--accent-strong); text-decoration-thickness: 1px; }
 """
 
 
-JS = """
+JS = r"""
 const DATA = window.TRANSIT_MONITOR_DATA || { opportunities: [], agencies: [] };
 const rowsEl = document.getElementById("opportunityRows");
 const visibleCount = document.getElementById("visibleCount");
@@ -425,6 +433,37 @@ const search = document.getElementById("search");
 const agencyFilter = document.getElementById("agencyFilter");
 const priorityFilter = document.getElementById("priorityFilter");
 const statusFilter = document.getElementById("statusFilter");
+const yearFilter = document.getElementById("yearFilter");
+const today = new Date();
+const todayKey = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"), String(today.getDate()).padStart(2, "0")].join("-");
+
+function validDate(value) {
+  const text = String(value || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+function lifecycle(item) {
+  const status = String(item.status || "").trim();
+  if (!status || /^(unknown(?: \/ not provided)?|not provided|n\/a)$/i.test(status)) {
+    return validDate(item.due_date) && validDate(item.due_date) < todayKey ? "Deadline passed" : "Unknown / Not provided";
+  }
+  return status;
+}
+function year(item) {
+  const value = validDate(item.due_date) || validDate(item.posted_date);
+  return value ? value.slice(0, 4) : "Undated";
+}
+function sortRows(a, b) {
+  function bucket(item) {
+    const due = validDate(item.due_date);
+    return due ? (due >= todayKey ? 0 : 1) : 2;
+  }
+  const aBucket = bucket(a), bBucket = bucket(b);
+  if (aBucket !== bBucket) return aBucket - bBucket;
+  const aDate = validDate(a.due_date) || validDate(a.posted_date);
+  const bDate = validDate(b.due_date) || validDate(b.posted_date);
+  return (aBucket === 0 ? aDate.localeCompare(bDate) : bDate.localeCompare(aDate))
+    || String(a.agency).localeCompare(String(b.agency)) || String(a.opportunity_id).localeCompare(String(b.opportunity_id));
+}
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -438,7 +477,8 @@ function option(value) {
 }
 
 unique(DATA.opportunities.map(item => item.agency)).forEach(value => agencyFilter.append(option(value)));
-unique(DATA.opportunities.map(item => item.status)).forEach(value => statusFilter.append(option(value)));
+unique(DATA.opportunities.map(lifecycle)).forEach(value => statusFilter.append(option(value)));
+unique(DATA.opportunities.map(year)).sort((a, b) => a === "Undated" ? 1 : b === "Undated" ? -1 : b.localeCompare(a)).forEach(value => yearFilter.append(option(value)));
 
 function pillClass(priority) {
   return String(priority || "").toLowerCase();
@@ -452,11 +492,12 @@ function matches(item) {
   return (!q || haystack.includes(q))
     && (!agencyFilter.value || item.agency === agencyFilter.value)
     && (!priorityFilter.value || item.priority === priorityFilter.value)
-    && (!statusFilter.value || item.status === statusFilter.value);
+    && (!statusFilter.value || lifecycle(item) === statusFilter.value)
+    && (!yearFilter.value || year(item) === yearFilter.value);
 }
 
 function render() {
-  const visible = DATA.opportunities.filter(matches);
+  const visible = DATA.opportunities.filter(matches).sort(sortRows);
   visibleCount.textContent = visible.length;
   if (!visible.length) {
     rowsEl.innerHTML = `<tr><td colspan="7" class="empty">No opportunities match these filters.</td></tr>`;
@@ -470,7 +511,7 @@ function render() {
       <td><a href="${escapeAttr(href)}" target="_blank" rel="noopener">${escapeHtml(item.opportunity_id || "")}</a></td>
       <td class="project">${title}<div class="subtext">${escapeHtml(item.description || "")}</div></td>
       <td>${escapeHtml(item.due_date || "")}</td>
-      <td>${escapeHtml(item.status || "")}</td>
+      <td>${escapeHtml(lifecycle(item))}</td>
       <td><span class="pill ${pillClass(item.priority)}">${escapeHtml(item.priority || "")}</span></td>
       <td class="relevance">${escapeHtml(item.pgh_wong_relevance || "")}</td>
     </tr>`;
@@ -487,7 +528,7 @@ function escapeAttr(value) {
   return escapeHtml(value).replace(/`/g, "&#096;");
 }
 
-[search, agencyFilter, priorityFilter, statusFilter].forEach(el => el.addEventListener("input", render));
+[search, agencyFilter, priorityFilter, statusFilter, yearFilter].forEach(el => el.addEventListener("input", render));
 render();
 """
 

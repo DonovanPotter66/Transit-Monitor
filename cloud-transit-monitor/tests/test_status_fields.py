@@ -31,6 +31,13 @@ class StatusFieldsTests(unittest.TestCase):
         records = _bart_records_from_grid(self.headers, [self.row("Accepted", "DBE")])
         self.assertEqual(normalize(Source("BART", "Bids", "url"), records)[0].status, "Accepted")
 
+    def test_explicit_portal_view_supplies_missing_status(self):
+        row = {"Ref. #": "123", "Project": "Example", "Close Date": "10/20/2026"}
+        source = Source("CTA", "CTA Bonfire Open Opportunities", "url", id_headers=("ref. #",))
+        self.assertEqual(normalize(source, [row])[0].status, "Open")
+        row["Status"] = "Cancelled"
+        self.assertEqual(normalize(source, [row])[0].status, "Cancelled")
+
     def test_changed_columns_fail_closed(self):
         with self.assertRaises(ValueError):
             _bart_records_from_grid(self.headers[:5] + self.headers[6:], [self.row()])

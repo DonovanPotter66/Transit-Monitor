@@ -136,6 +136,19 @@ def normalize(source: Source, records: list[dict[str, str]]) -> list[Opportunity
         # Exact headers only: "Status/Due Date" is not a status field.
         status = next((clean(v) for k, v in record.items()
                        if clean(k).lower() in STATUS_HEADERS and clean(v)), "")
+        # Explicitly labelled portal views provide status when the row does not.
+        listing_status = {
+            "CTA Bonfire Open Opportunities": "Open",
+            "DART Bonfire Open Opportunities": "Open",
+            "RTD OpenGov Open Projects (embedded)": "Open",
+            "RTD OpenGov Coming Soon Projects (embedded)": "Upcoming",
+            "RTD OpenGov Pending Award Projects (embedded)": "Pending award",
+            "RTD OpenGov Closed Projects (embedded verification)": "Closed",
+            "LA Metro Vendor Portal Open Solicitations": "Open",
+            "Future Professional Services Contract Bid Solicitations": "Upcoming",
+        }
+        if not status:
+            status = listing_status.get(source.name, "")
         if source.agency in REINTEGRATION_AGENCIES:
             # Never synthesize an ID or silently accept a UI/header row for a
             # deferred source. Publication requires an ID, title, and at
